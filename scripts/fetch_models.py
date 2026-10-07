@@ -7,8 +7,13 @@ from huggingface_hub import snapshot_download
 PINNED_MODELS = {
     "classifier": {
         "repo_id": "Organika/sdxl-detector",
-        "revision": "657a8bf7e4daee1a067ffbb3e5a5937172088f12",
-        "license": "apache-2.0",
+        # The previously pinned 657a8bf... does not exist on the Hub (404). This is
+        # the real head revision. Always re-verify a pin before trusting it.
+        "revision": "b37fede8562cb72b89ec201c0987f96ba21b518a",
+        # NOT apache-2.0. The Hub reports cc-by-nc-3.0: non-commercial use only.
+        "license": "cc-by-nc-3.0",
+        # Prebuilt fp32 ONNX shipped in the repo; avoids a local torch export.
+        "onnx_subpath": "onnx/model.onnx",
     },
     "clip": {
         "repo_id": "openai/clip-vit-base-patch16",
@@ -28,6 +33,7 @@ def fetch_models(output_dir: str = "models/raw"):
             revision=info["revision"],
             local_dir=dest,
             local_dir_use_symlinks=False,
+            allow_patterns=["*.json", "*.onnx"],
         )
         print(f"Downloaded {name} to {dest}")
 

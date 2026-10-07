@@ -1,6 +1,5 @@
 """Unit tests for ensemble fusion math, verdict policies, and confidence calculation."""
-import pytest
-from app.services.ensemble import (
+from sahu65.services.ensemble import (
     clip_prob,
     compute_confidence,
     compute_verdict,

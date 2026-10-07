@@ -25,7 +25,6 @@ def compute_ece(probs: np.ndarray, labels: np.ndarray, n_bins: int = 10) -> floa
     """Computes Expected Calibration Error (ECE)."""
     bin_boundaries = np.linspace(0, 1, n_bins + 1)
     ece = 0.0
-    n = len(probs)
     for i in range(n_bins):
         bin_lower = bin_boundaries[i]
         bin_upper = bin_boundaries[i + 1]

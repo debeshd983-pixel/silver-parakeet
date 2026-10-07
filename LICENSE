@@ -1,0 +1,47 @@
+MIT License
+
+Copyright (c) 2026 sahu65 contributors
+
+== CODE ==
+
+The source code in this package (everything except the bundled model weights) is
+licensed under the MIT License:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this
+software and associated documentation files (the "Software"), to deal in the Software
+without restriction, including without limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of the Software, and to permit
+persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or
+substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+== BUNDLED MODEL WEIGHTS (IMPORTANT - DIFFERENT LICENSE) ==
+
+`sahu65/models/classifier.int8.onnx` is a dynamically INT8-quantized export of
+`Organika/sdxl-detector` (Swin-T image classifier).
+
+That upstream model is licensed **Creative Commons Attribution-NonCommercial 3.0
+Unported (CC BY-NC 3.0)** — NOT MIT, and NOT Apache-2.0.
+
+Consequences for anyone installing or redistributing this package:
+
+  * The bundled weights may be used only for **non-commercial** purposes.
+  * Commercial use of anything shipped in this package is **not permitted** without
+    replacing `sahu65/models/classifier.int8.onnx` with a permissively licensed
+    checkpoint and re-tuning the thresholds.
+  * Attribution to `Organika/sdxl-detector` is required.
+
+The CC BY-NC 3.0 license text is available at:
+https://creativecommons.org/licenses/by-nc/3.0/legalcode
+
+Earlier revisions of this project's documentation incorrectly recorded this checkpoint as
+Apache-2.0 and described commercial use as permitted. That was wrong and has been
+corrected.

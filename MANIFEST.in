@@ -1,0 +1,23 @@
+# The INT8 checkpoint (~92 MB raw, ~66.6 MB as shipped) is included in BOTH the sdist
+# and the wheel so that `pip install sahu65` works with no download step and no
+# cold-start stall, and so that a source install also works.
+#
+# Do NOT add an `exclude sahu65/models/classifier.int8.onnx` line to keep the sdist
+# small. It appears to scope to the sdist only, but setuptools also applies it when
+# building the wheel, which silently strips the checkpoint from the wheel and produces a
+# package that cannot run. Verified: with the exclude, the wheel was 37 KB with no model.
+#
+# Both artifacts land at ~66.6 MB, comfortably under PyPI's 100 MB per-file limit.
+include README.md
+include LICENSE
+include MODEL_CARD.md
+include requirements.txt
+recursive-include sahu65 *.py
+recursive-include sahu65/models *.onnx *.json
+recursive-include sahu65/config *.json
+prune tests
+prune scripts
+prune assets
+prune models
+prune .venv
+global-exclude __pycache__ *.pyc

@@ -1,0 +1,8 @@
+{
+  "w1": 1.0,
+  "w2": 0.0,
+  "b": 0.0,
+  "benchmark_id": null,
+  "fitted_on": null,
+  "note": "w2=0: the CLIP probe head is untrained (scripts/train_probe.py fits on np.random.randn), so it contributes noise. Re-enable only after fitting a real head on real embeddings."
+}

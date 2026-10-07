@@ -2,7 +2,7 @@
 import io
 import numpy as np
 from PIL import Image
-from app.services.preprocess import (
+from sahu65.services.preprocess import (
     decode_image,
     preprocess_for_classifier,
     preprocess_for_clip,

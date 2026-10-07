@@ -3,8 +3,7 @@ import csv
 import hashlib
 import os
 import random
-from typing import List, Tuple
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 
 
 def compute_sha256(path: str) -> str:

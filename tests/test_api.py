@@ -1,14 +1,26 @@
 """Integration tests for FastAPI endpoints: /v1/detect, /healthz, /readyz, /version."""
 import io
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
-from app.main import app
+from sahu65.main import app
+
+READY_TIMEOUT_S = 120
 
 
 @pytest.fixture
 def client():
     with TestClient(app) as c:
+        # Models load in the background (~8s of ONNX deserialization), so /readyz
+        # must be polled rather than assumed. If the real weights are absent the app
+        # deliberately never becomes ready; those tests are skipped below.
+        deadline = time.time() + READY_TIMEOUT_S
+        while time.time() < deadline:
+            if c.get("/readyz").status_code == 200:
+                break
+            time.sleep(0.5)
         yield c
 
 
@@ -17,6 +29,24 @@ def create_test_image(format="JPEG", size=(256, 256), color="red") -> bytes:
     buf = io.BytesIO()
     img.save(buf, format=format)
     return buf.getvalue()
+
+
+def test_healthz_responds_before_model_is_loaded():
+    """/healthz must never block on the ~8s model load - that is the whole point
+    of loading in the background."""
+    with TestClient(app) as c:
+        r = c.get("/healthz")
+        assert r.status_code == 200
+        assert r.json() == {"status": "ok"}
+
+
+def test_readyz_reports_load_failure_when_weights_missing():
+    """A missing checkpoint must surface as 503, never as a silent 0.50 stub."""
+    with TestClient(app) as c:
+        r = c.get("/readyz")
+        assert r.status_code in (200, 503)
+        if r.status_code == 503:
+            assert r.json()["error"]["code"] in ("model_not_ready", "model_load_failed")
 
 
 def test_healthz_and_readyz(client):

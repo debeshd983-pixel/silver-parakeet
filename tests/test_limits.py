@@ -2,12 +2,10 @@
 import io
 import pytest
 from PIL import Image
-from app.config import Settings
-from app.core.limits import (
+from sahu65.config import Settings
+from sahu65.core.limits import (
     ImageTooLargePixelsError,
-    InvalidImageError,
     SimpleRateLimiter,
-    UnsupportedTypeError,
     inspect_image_pixels,
     sniff_image_type,
 )

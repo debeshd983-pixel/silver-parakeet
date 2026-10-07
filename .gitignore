@@ -3,11 +3,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .opencode/
-models/
 benchmark/images/
 benchmark/raw/
-*.onnx
-*.onnx.data
+models/*.onnx.data
+models/raw/
 dist/
 build/
 *.egg-info/

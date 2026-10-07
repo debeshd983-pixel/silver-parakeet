@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sahu65"
+version = "1.0.0"
+description = "AI-generated image detection: local model or hosted API. NOT proof - see MODEL_CARD.md."
+readme = "README.md"
+requires-python = ">=3.9,<3.14"
+license = { text = "MIT (code); CC-BY-NC-3.0 (bundled model weights) - see LICENSE" }
+authors = [{ name = "sahu65" }]
+keywords = ["deepfake", "ai-generated", "image-forensics", "detection", "c2pa"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+]
+
+dependencies = [
+    # Upper bounds are pinned to the minor versions this project is validated against
+    # (requirements.txt). These libraries ship compiled extensions, and an unbounded
+    # range will happily install a combination nobody has tested - in practice a loose
+    # "numpy>=2.0" pulled numpy 2.4.6 and "onnxruntime>=1.20" pulled 1.30.0, both of
+    # which failed to import on the target machine. Loosen deliberately, with a test run,
+    # not by accident at install time.
+    "fastapi>=0.115.6,<0.116",
+    "uvicorn>=0.34.0,<0.35",
+    "pydantic>=2.10.4,<2.11",
+    "pydantic-settings>=2.7.1,<2.8",
+    "python-multipart>=0.0.20,<0.1",
+    "pillow>=11.1.0,<11.2",
+    "numpy>=2.2.2,<2.3",
+    "onnxruntime>=1.22.0,<1.23",
+    "scipy>=1.15.1,<1.16",
+    # Core, not an extra: the hosted-API client is a headline feature and must work on a
+    # plain `pip install sahu65`. Still imported lazily so local-only inference never
+    # pays the import cost.
+    "httpx>=0.28.1,<0.29",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "httpx>=0.28",
+    "ruff>=0.9",
+    "build>=1.2",
+    "twine>=6.0",
+]
+
+[project.urls]
+Homepage = "https://pypi.org/project/sahu65/"
+
+[project.scripts]
+sahu65 = "sahu65.cli:main"
+
+[tool.setuptools]
+# The INT8 checkpoint (~92 MB raw) ships in both the wheel and the sdist so an
+# installed package works with no download step and no cold-start stall. Both artifacts
+# land at ~66.6 MB, under PyPI's 100 MB per-file limit.
+#
+# include-package-data MUST stay false: with it true, setuptools applies MANIFEST.in
+# rules to the wheel as well, which is how an `exclude` for the checkpoint silently
+# produced a 37 KB wheel containing no model. With it false, the wheel is driven solely
+# by [tool.setuptools.package-data]. See MANIFEST.in for the matching warning.
+include-package-data = false
+
+[tool.setuptools.packages.find]
+include = ["sahu65*"]
+exclude = ["tests*", "scripts*", "assets*"]
+
+[tool.setuptools.package-data]
+sahu65 = [
+    "models/classifier.int8.onnx",
+    "models/config.json",
+    "models/preprocessor_config.json",
+    "config/thresholds.json",
+    "config/fusion.json",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
