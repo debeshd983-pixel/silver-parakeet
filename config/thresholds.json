@@ -1,0 +1,7 @@
+{
+  "T_lo": 0.35,
+  "T_hi": 0.65,
+  "benchmark_id": null,
+  "fitted_on": null,
+  "note": "PLACEHOLDER — real thresholds fitted on calibration split in P2"
+}
