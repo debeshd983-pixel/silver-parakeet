@@ -1,9 +1,7 @@
 """FastAPI application factory, lifespan management, model loading, and uniform error handlers."""
 import json
-import logging
 import os
 import time
-import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Dict
 

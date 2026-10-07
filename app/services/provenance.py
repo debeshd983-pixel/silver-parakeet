@@ -1,6 +1,6 @@
 """Provenance extraction via C2PA manifests (Signal S1)."""
 import logging
-from typing import Optional, Tuple
+from typing import Optional
 from pydantic import BaseModel
 
 logger = logging.getLogger("detector")

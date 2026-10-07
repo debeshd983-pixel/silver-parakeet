@@ -47,13 +47,13 @@
 > in place only to be explicitly retracted.
 >
 > `config/thresholds.json` and `config/fusion.json` are unfitted placeholders
-> (`fitted_on: null`). `/version` therefore reports `calibrated: false` and every
+> (`fitted_on: null`). `/deep-guard/version` therefore reports `calibrated: false` and every
 > detection response carries the `thresholds_unfitted` warning. **The returned
 > probability is an uncalibrated model score, not a posterior.**
 
 ### 3.1 Measured behaviour (2026-10-07, the only real measurements available)
 
-Measured end-to-end through `POST /v1/detect` against 18 images: 4 known-AI documents
+Measured end-to-end through `POST /deep-guard/detect` against 18 images: 4 known-AI documents
 (`assets/ai/`), 2 known-real documents (`assets/rl/`), 12 real photographs pulled from
 Wikimedia Commons (`assets/natural/`). This is a small, unbalanced sample and is reported
 only to document known failure modes — **it is not an accuracy claim.**

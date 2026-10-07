@@ -23,7 +23,7 @@ A lightweight, CPU-only AI-generated image detection service and Python package 
 > 0.751 AUC). **Do not use this service for document, passport, or ID fraud decisions.**
 >
 > The returned probability is also **uncalibrated**: `T_lo`/`T_hi` are unfitted
-> placeholders, so every response carries a `thresholds_unfitted` warning and `/version`
+> placeholders, so every response carries a `thresholds_unfitted` warning and `/deep-guard/version`
 > reports `"calibrated": false`.
 
 ---
@@ -40,7 +40,7 @@ A lightweight, CPU-only AI-generated image detection service and Python package 
   probe with `start_period` >= 30 s** (the Dockerfile does). Calling `sahu65.warm()`
   ahead of time moves this cost off your first request.
 - **Measured latency:** ~200 ms per image warm (1080p JPEG, 4 CPU threads).
-- **Fails loudly:** a missing or unreadable checkpoint is a hard `/readyz` failure
+- **Fails loudly:** a missing or unreadable checkpoint is a hard `/deep-guard/readyz` failure
   (`503 model_load_failed`), never a silent stub probability. Previously a missing model
   returned a constant `0.50` that looked like a working model.
 - **Label mapping is data-driven:** the AI class index is resolved from the checkpoint's own
@@ -107,9 +107,9 @@ sahu65 info                    # bundled checkpoint + threshold state
 uvicorn sahu65.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
-Authenticate with `X-API-Key` once `API_KEYS` is set. **Gate traffic on `/readyz`, not
-`/healthz`** — `/readyz` is 503 until the real weights are resident, and it reports
-`model_load_failed` if the checkpoint is missing.
+Authenticate with `X-API-Key` once `API_KEYS` is set. **Gate traffic on
+`/deep-guard/readyz`, not `/deep-guard/healthz`** — `/deep-guard/readyz` is 503 until the
+real weights are resident, and it reports `model_load_failed` if the checkpoint is missing.
 
 ### 2. Run with Docker
 
@@ -125,13 +125,22 @@ docker run -p 8000:8000 --cpus=2 --memory=1g ai-image-detector:latest
 
 ## API Reference
 
-### `POST /v1/detect`
+All routes are mounted under the **`/deep-guard`** prefix.
+
+| Endpoint | Method | Path |
+|---|---|---|
+| Detection | `POST` | `/deep-guard/detect` |
+| Liveness | `GET` | `/deep-guard/healthz` |
+| Readiness | `GET` | `/deep-guard/readyz` |
+| Version | `GET` | `/deep-guard/version` |
+
+### `POST /deep-guard/detect`
 
 Accepts multipart form-data with an image file (`JPEG`, `PNG`, `WebP`).
 
 **Example Request:**
 ```bash
-curl -X POST http://localhost:8000/v1/detect \
+curl -X POST http://localhost:8000/deep-guard/detect \
   -F "file=@sample.jpg"
 ```
 
@@ -162,9 +171,9 @@ an uncalibrated model score.
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/healthz` | `GET` | Liveness check. Note: it does **not** answer until weights are loaded (~10 s), because ONNX Runtime's session init holds the GIL. Useful as a "process is up" signal, not a "model is ready" one. |
-| `/readyz` | `GET` | **Gate traffic on this.** 200 once models loaded & warmed; 503 `model_not_ready` while loading; 503 `model_load_failed` if the checkpoint is missing |
-| `/version` | `GET` | Model IDs, revision, thresholds, fusion weights, and a `calibrated` flag |
+| `/deep-guard/healthz` | `GET` | Liveness check. Note: it does **not** answer until weights are loaded (~10 s), because ONNX Runtime's session init holds the GIL. Useful as a "process is up" signal, not a "model is ready" one. |
+| `/deep-guard/readyz` | `GET` | **Gate traffic on this.** 200 once models loaded & warmed; 503 `model_not_ready` while loading; 503 `model_load_failed` if the checkpoint is missing |
+| `/deep-guard/version` | `GET` | Model IDs, revision, thresholds, fusion weights, and a `calibrated` flag |
 
 ---
 

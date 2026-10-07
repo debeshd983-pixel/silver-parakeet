@@ -3,11 +3,13 @@ hf_hub_download (avoids snapshot_download, which crashes in this env), and write
 classifier_meta.json so the runtime picks the correct AI class index."""
 import json
 import os
-import sys
+import shutil
 
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
-from huggingface_hub import hf_hub_download
+
+# Imported after the progress-bar env vars are set, hence the E402 waiver.
+from huggingface_hub import hf_hub_download  # noqa: E402
 
 REPO = "Organika/sdxl-detector"
 PINNED = "657a8bf7e4daee1a067ffbb3e5a5937172088f12"
@@ -44,7 +46,6 @@ cfg_path, _ = try_download("onnx/config.json", revisions)
 prep_path, _ = try_download("onnx/preprocessor_config.json", revisions)
 
 # Copy ONNX into models/classifier.onnx
-import shutil
 dst_onnx = os.path.join(MODEL_DIR, "classifier.onnx")
 shutil.copyfile(onnx_path, dst_onnx)
 print(f"  wrote {dst_onnx} ({os.path.getsize(dst_onnx)} bytes)", flush=True)

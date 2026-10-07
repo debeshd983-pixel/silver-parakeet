@@ -114,7 +114,11 @@ It only appears as a signal, because provenance data can be real on an image tha
 
 ## 4. API contract
 
-### `POST /v1/detect`
+All routes are mounted under the **`/deep-guard`** prefix (a single `APIRouter(prefix=...)`
+in `sahu65/api/routes.py`). There is no `/v1` version segment; the prefix is the version
+boundary.
+
+### `POST /deep-guard/detect`
 
 Multipart form, field `file`. Allowed types: JPEG, PNG, WebP (detected by content sniffing, not by extension or the client's header).
 
@@ -153,10 +157,10 @@ Errors use a uniform shape `{ "error": { "code": "...", "message": "..." } }`:
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /healthz` | Liveness, always cheap |
-| `GET /readyz` | 200 only after models are loaded and a warm-up inference has run |
-| `GET /version` | Model names, revisions, thresholds, benchmark ID |
-| `GET /metrics` | Prometheus metrics (optional, behind `ENABLE_METRICS`) |
+| `GET /deep-guard/healthz` | Liveness, always cheap |
+| `GET /deep-guard/readyz` | 200 only after models are loaded and a warm-up inference has run |
+| `GET /deep-guard/version` | Model names, revisions, thresholds, benchmark ID |
+| `GET /deep-guard/metrics` | Prometheus metrics (optional, behind `ENABLE_METRICS`) |
 
 The OpenAPI docs at `/docs` are disabled in production by default.
 
@@ -213,7 +217,7 @@ This is what keeps the image light.
 - **ONNX Runtime, CPUExecutionProvider.** Set `intra_op_num_threads` to the container's vCPU count, `inter_op_num_threads=1`, and enable graph optimization.
 - **int8 dynamic quantization** for the transformer MatMul layers. Accept it only if the quantized model's accuracy on the calibration split is within 1 percentage point of fp32 and AUC drops by < 0.01. Otherwise ship fp32.
 - **Concurrency:** `run_in_threadpool` around inference so the event loop stays free. Cap in-flight inferences with a semaphore (default = vCPU count), and queue the rest briefly before returning 429 or 503. Avoids memory blowups under load.
-- **Warm-up:** run one dummy inference in the app lifespan before `/readyz` goes green, so the first real request is not slow.
+- **Warm-up:** run one dummy inference in the app lifespan before `/deep-guard/readyz` goes green, so the first real request is not slow.
 - **Workers:** 1 uvicorn worker per container; scale with replicas. Multiple workers each load models and multiply RAM.
 
 ### Performance budget (targets, 2 vCPU, ~12 MP JPEG)
@@ -294,7 +298,7 @@ Because of the small sample size, intervals will be wide. Say so in the model ca
 **Dockerfile (multi-stage):**
 
 1. `builder` stage: install build requirements, fetch models by pinned revision, export to ONNX, quantize, verify, write SHA-256 manifest.
-2. `runtime` stage: `python:3.11-slim`, install runtime requirements only, copy ONNX files + config, create non-root user, `HEALTHCHECK` against `/healthz`, start with `uvicorn --workers 1`.
+2. `runtime` stage: `python:3.11-slim`, install runtime requirements only, copy ONNX files + config, create non-root user, `HEALTHCHECK` against `/deep-guard/readyz`, start with `uvicorn --workers 1`.
 
 **Target platforms**, in order of preference for this workload:
 

@@ -5,6 +5,7 @@ __pycache__/
 .opencode/
 benchmark/images/
 benchmark/raw/
+models/*.onnx
 models/*.onnx.data
 models/raw/
 dist/

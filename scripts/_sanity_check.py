@@ -1,11 +1,15 @@
 """Sanity check: run the real ClassifierService on 1 AI + 1 real image to
 confirm the ONNX loads and the AI/real direction is correct."""
-import os, sys
+import os
+import sys
+
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 sys.path.insert(0, ".")
-from app.config import get_settings
-from app.services.classifier import ClassifierService
-from app.services.preprocess import decode_image, preprocess_for_classifier
+
+# Imported after the progress-bar env var and sys.path are set, hence the E402 waivers.
+from app.config import get_settings  # noqa: E402
+from app.services.classifier import ClassifierService  # noqa: E402
+from app.services.preprocess import decode_image, preprocess_for_classifier  # noqa: E402
 
 s = get_settings()
 svc = ClassifierService(s)

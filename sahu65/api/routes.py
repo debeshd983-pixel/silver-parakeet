@@ -1,4 +1,4 @@
-"""API route definitions: /v1/detect, /healthz, /readyz, /version (architecture.md section 4)."""
+"""API route definitions: /deep-guard/detect, /healthz, /readyz, /version (architecture.md section 4)."""
 import time
 import uuid
 from typing import Optional
@@ -35,7 +35,9 @@ from sahu65.services.preprocess import (
 from sahu65.services.domain import assess_domain
 from sahu65.services.provenance import extract_c2pa_provenance
 
-router = APIRouter()
+API_PREFIX = "/deep-guard"
+
+router = APIRouter(prefix=API_PREFIX)
 
 
 @router.get("/healthz")
@@ -49,8 +51,8 @@ async def readyz():
     """Readiness probe: 200 only once the real model is loaded and warmed.
 
     This is the probe to gate traffic on — the process binds its socket immediately
-    and loads ~8s of ONNX weights in the background, so /healthz alone will report
-    "ok" long before the service can actually serve a detection.
+    and loads ~8s of ONNX weights in the background, so /deep-guard/healthz alone will
+    report "ok" long before the service can actually serve a detection.
     """
     if main_module.LOAD_ERROR:
         return JSONResponse(
@@ -93,7 +95,7 @@ async def version():
     )
 
 
-@router.post("/v1/detect", response_model=DetectionResponse)
+@router.post("/detect", response_model=DetectionResponse)
 async def detect(
     request: Request,
     file: UploadFile = File(...),

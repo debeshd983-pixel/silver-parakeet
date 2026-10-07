@@ -36,9 +36,10 @@ ENV MODEL_DIR=/app/sahu65/models \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Gate on /readyz, not /healthz. ONNX Runtime's ~10s session init holds the GIL, so the
-# first HTTP response only lands once weights are resident. start-period must cover that.
+# Gate on /deep-guard/readyz, not /deep-guard/healthz. ONNX Runtime's ~10s session init
+# holds the GIL, so the first HTTP response only lands once weights are resident.
+# start-period must cover that.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8000/readyz || exit 1
+    CMD curl -f http://localhost:8000/deep-guard/readyz || exit 1
 
 ENTRYPOINT ["uvicorn", "sahu65.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

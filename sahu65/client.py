@@ -33,7 +33,7 @@ class NotReadyError(Sahu65Error):
 
 
 class Client:
-    """Thin synchronous client for POST /v1/detect.
+    """Thin synchronous client for POST /deep-guard/detect.
 
     Set ``SAHU65_API_KEY`` and ``SAHU65_BASE_URL`` in the environment instead of
     passing them explicitly.
@@ -90,7 +90,7 @@ class Client:
 
         with httpx.Client(timeout=self.timeout) as client:
             resp = client.post(
-                f"{self.base_url}/v1/detect",
+                f"{self.base_url}/deep-guard/detect",
                 headers=self._headers(),
                 files={"file": (filename, payload, "application/octet-stream")},
             )
@@ -100,7 +100,7 @@ class Client:
     def version(self) -> Dict[str, Any]:
         """Returns model IDs, thresholds, fusion weights and calibration state."""
         with httpx.Client(timeout=self.timeout) as client:
-            resp = client.get(f"{self.base_url}/version", headers=self._headers())
+            resp = client.get(f"{self.base_url}/deep-guard/version", headers=self._headers())
         self._raise_for_status(resp)
         return resp.json()
 
@@ -112,13 +112,13 @@ class Client:
         """
         try:
             with httpx.Client(timeout=self.timeout) as client:
-                resp = client.get(f"{self.base_url}/readyz", headers=self._headers())
+                resp = client.get(f"{self.base_url}/deep-guard/readyz", headers=self._headers())
             return resp.status_code == 200
         except Exception:
             return False
 
     def wait_until_ready(self, timeout_s: float = 180.0, poll_s: float = 2.0) -> bool:
-        """Blocks until /readyz reports ready, or the timeout elapses.
+        """Blocks until /deep-guard/readyz reports ready, or the timeout elapses.
 
         Useful right after a cold start, since the server binds its socket before the
         ~8s of ONNX weight loading completes.

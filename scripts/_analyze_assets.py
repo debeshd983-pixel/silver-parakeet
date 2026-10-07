@@ -1,4 +1,4 @@
-"""Run the real /v1/detect endpoint (in-process via TestClient) over the labeled
+"""Run the real /deep-guard/detect endpoint (in-process via TestClient) over the labeled
 images in assets/ai (AI) and assets/rl (real), and emit a per-image table plus
 accuracy/FPR/abstain metrics. Writes results to analysis_results.json."""
 import json
@@ -32,8 +32,8 @@ def mime_for(path):
 rows = []
 with TestClient(app) as client:
     # readiness sanity
-    ready = client.get("/readyz").json()
-    ver = client.get("/version").json()
+    ready = client.get("/deep-guard/readyz").json()
+    ver = client.get("/deep-guard/version").json()
     print("readyz:", ready)
     print("version:", json.dumps(ver, indent=2))
 
@@ -45,7 +45,7 @@ with TestClient(app) as client:
             with open(path, "rb") as f:
                 data = f.read()
             files = {"file": (os.path.basename(path), data, mime_for(path))}
-            r = client.post("/v1/detect", files=files)
+            r = client.post("/deep-guard/detect", files=files)
             rec = {
                 "file": f"{folder}/{os.path.basename(path)}",
                 "label": "ai" if label == 1 else "real",

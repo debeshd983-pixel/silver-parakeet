@@ -2,7 +2,7 @@
 import io
 import time
 from collections import defaultdict
-from typing import Optional, Set, Tuple
+from typing import Optional, Tuple
 from fastapi import UploadFile
 from PIL import Image
 

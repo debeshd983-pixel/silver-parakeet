@@ -1,0 +1,11 @@
+# Runs ruff on every commit so lint errors fail locally instead of in CI.
+#   pip install pre-commit && pre-commit install
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.4
+    hooks:
+      - id: ruff
+        # Same targets as the CI lint step (.github/workflows/ci.yml), so a clean
+        # commit is a green lint job.
+        args: [--fix]
+        files: ^(sahu65|tests|scripts)/
