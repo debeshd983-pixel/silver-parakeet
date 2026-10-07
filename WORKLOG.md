@@ -161,21 +161,31 @@ fails before upload if the checkpoint is missing, or if any artifact exceeds PyP
 
 ## Release
 
-Automated via GitHub Actions — **the token is never handled locally**.
+Automated via GitHub Actions — **the token is never handled locally**. One pipeline,
+`.github/workflows/ci.yml`: every push to `main` runs lint → tests → checkpoint guard →
+build → `verify_dist.py` → `twine check` → **smoke test of the built wheel**, then a
+`publish` job downloads those exact verified artifacts, uploads them to PyPI, and polls
+until the version is live. PRs run every step except the upload.
 
-1. Create a PyPI API token scoped to `sahu65` only: <https://pypi.org/manage/account/token/>
+The previous `publish.yml` (release / manual-dispatch triggered) was **deleted**: it
+had **zero runs** because nothing ever published a GitHub Release or dispatched it —
+setting the secret alone does not trigger a workflow. Pushing to `main` is now the
+trigger.
+
+1. Create a PyPI API token: <https://pypi.org/manage/account/token/> — account-wide for
+   the very first upload (the project does not exist yet), then scoped to `sahu65`
 2. GitHub → **Settings → Secrets and variables → Actions → New repository secret** →
    `PYPI_API_TOKEN`
-3. Recommended: a GitHub **Environment** named `pypi` with the secret attached, so the
-   upload can require review
+3. Recommended: a GitHub **Environment** named `pypi` with required reviewers, so each
+   upload can require approval
 
 ```bash
-git tag v1.0.0 && git push origin main --tags
-gh release create v1.0.0 --title "v1.0.0" --notes "..."
+python scripts/bump_version.py patch   # PyPI releases are immutable - bump to ship
+git add -A && git commit -m "sahu65 1.0.1" && git push
 ```
 
-Publishing the release triggers `publish.yml`, which builds, verifies, smoke-tests the
-wheel in a clean venv, uploads, then polls PyPI to confirm.
+Pushing without bumping is safe: `skip-existing: true` makes the upload a no-op, so
+every push rebuilds and verifies but only a new version actually reaches PyPI.
 
 ---
 

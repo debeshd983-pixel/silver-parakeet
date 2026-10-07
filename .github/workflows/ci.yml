@@ -1,5 +1,26 @@
 name: CI
 
+# Single pipeline: verify -> build -> publish.
+#
+#   * Every push to main/master and every PR runs lint, tests, checkpoint guard,
+#     build, verify_dist.py, twine check and a smoke test of the built wheel.
+#   * Pushes to main/master then continue to the publish job, which uploads the
+#     *exact artifacts that were just verified* to PyPI and polls until the built
+#     version is live. Pull requests never publish.
+#
+# PyPI releases are immutable, so the upload uses skip-existing: true - a push that
+# did not bump the version is a green no-op on PyPI. To actually ship a change,
+# bump the version first and push that:
+#
+#     python scripts/bump_version.py patch     # or minor / major / X.Y.Z
+#     git add -A && git commit -m "sahu65 1.0.1" && git push
+#
+# Requires a secret named exactly PYPI_API_TOKEN (repository secret, or an
+# environment secret on the `pypi` environment - environment secrets override
+# repository ones):  https://pypi.org/manage/account/token/
+# For the FIRST upload the project does not exist on PyPI yet, so the token must be
+# scoped to the whole account; re-scope it to the `sahu65` project afterwards.
+
 on:
   push:
     branches: ["main", "master"]
@@ -100,9 +121,100 @@ jobs:
       - name: twine check
         run: python -m twine check dist/*
 
+      - name: Smoke-test the built wheel in a clean environment
+        # Prove the artifact a user will actually install can load the model and
+        # produce a verdict, before it goes anywhere near PyPI.
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install --upgrade pip
+          /tmp/smoke/bin/pip install dist/*.whl
+          /tmp/smoke/bin/python - <<'PY'
+          import sahu65, io
+          from PIL import Image
+          info = sahu65.model_info()
+          assert info["loaded"], info
+          assert info["ai_class_index"] == 0, info
+          assert info["labels"]["0"] == "artificial", info
+          buf = io.BytesIO()
+          Image.new("RGB", (320, 320), "white").save(buf, format="JPEG")
+          r = sahu65.detect_bytes(buf.getvalue())
+          assert r.verdict in ("likely_ai", "likely_real", "inconclusive"), r
+          print("smoke test OK:", r.verdict, r.ai_probability)
+          PY
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
           if-no-files-found: error
+
+  publish:
+    name: publish to PyPI
+    runs-on: ubuntu-latest
+    needs: build
+    # Publishes on every push to main/master and on manual runs checked out from
+    # those branches. Pull requests (and dispatches from feature branches) skip it.
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+
+    # Requires an environment (Settings -> Environments -> pypi). Protection rules let
+    # you require review before the upload - if a run sits waiting, approve it there.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/sahu65/
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check PYPI_API_TOKEN is configured
+        # Fail with an actionable message instead of an opaque 401 from PyPI.
+        env:
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          if [ -z "$PYPI_API_TOKEN" ]; then
+            echo "::error::PYPI_API_TOKEN is missing or empty."
+            echo "::error::Add it under Settings -> Secrets and variables -> Actions,"
+            echo "::error::or on the 'pypi' environment (an environment secret with the"
+            echo "::error::same name overrides the repository secret)."
+            exit 1
+          fi
+          echo "PYPI_API_TOKEN is set (${#PYPI_API_TOKEN} chars)"
+
+      - name: Download the verified artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Show what will be uploaded
+        run: ls -la dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          # PyPI releases are immutable: on a push that did not bump the version the
+          # files already exist and the upload is skipped instead of failing, which is
+          # what makes "publish on every push" safe. Remove this line if you would
+          # rather a duplicate version be a hard failure.
+          skip-existing: true
+          # Attestations require Trusted Publishing (OIDC); we authenticate with a
+          # token, so there is nothing to attest with.
+          attestations: false
+
+      - name: Confirm the built version is visible on PyPI
+        run: |
+          VERSION=$(basename "$(ls dist/*.whl | head -n 1)" | cut -d- -f2)
+          echo "expecting sahu65==$VERSION on PyPI"
+          for i in $(seq 1 30); do
+            if curl -fsS "https://pypi.org/pypi/sahu65/$VERSION/json" > /dev/null; then
+              echo "sahu65 $VERSION is live on PyPI"
+              exit 0
+            fi
+            echo "waiting for PyPI to index (attempt $i/30)..."
+            sleep 10
+          done
+          echo "::warning::sahu65 $VERSION did not appear on PyPI within 5 minutes; check manually"

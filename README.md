@@ -228,50 +228,52 @@ See [MODEL_CARD.md](MODEL_CARD.md) §1.
 
 Publishing is automated by GitHub Actions. **You never handle the token locally.**
 
+Every push to `main` runs the whole pipeline and then publishes: ruff → pytest →
+checkpoint guard → build → `verify_dist.py` → `twine check` → **smoke-test the built
+wheel in a clean venv** → upload to PyPI → poll PyPI until the version is live. Pull
+requests run every step **except** the upload.
+
 ### One-time setup
 
 1. Create a PyPI API token: <https://pypi.org/manage/account/token/>
-   - Scope: **only** the `sahu65` project
-   - This is **not** your account password
+   - **First upload:** `sahu65` does not exist on PyPI yet, so a project-scoped token
+     cannot be created — scope it to your **entire account**, then replace it with a
+     `sahu65`-scoped token after the first successful publish.
+   - This is **not** your account password.
 2. In the GitHub repo: **Settings → Secrets and variables → Actions → New repository
    secret**
-   - Name: `PYPI_API_TOKEN`
+   - Name: `PYPI_API_TOKEN` (exact spelling)
    - Value: the token (`pypi-...`)
 3. *(Recommended)* Create a GitHub Environment named `pypi`
-   (**Settings → Environments**) and attach the secret to it, so the upload runs only
-   from that environment and can require review.
+   (**Settings → Environments**). The publish job runs in it, so protection rules with
+   required reviewers turn every upload into an approval. If that environment defines
+   its own `PYPI_API_TOKEN`, it **overrides** the repository secret.
 
-### Releasing
+### Releasing a new version
 
-This directory is not yet a usable git repository — a stale, incomplete `.git/` exists
-(`git` reports *"not a git repository"*). Remove it and start clean. Git is installed at
-`C:\Program Files\Git\cmd\git.exe` but is **not on `PATH`** on this machine.
+PyPI releases are immutable: a push that does not change the version uploads nothing
+(`skip-existing: true`), so the job stays green without re-publishing anything. To
+actually ship a change, bump the version first — `scripts/bump_version.py` keeps
+`pyproject.toml` and `sahu65/__init__.py` in sync:
 
 ```bash
-# 1. Repo setup (once)
-rm -r .git                      # PowerShell: Remove-Item -Recurse -Force .git
-git init
-git remote add origin https://github.com/<you>/<repo>.git
-
-# 2. Bump version in pyproject.toml, then verify locally
-python -m build && python scripts/verify_dist.py && python -m twine check dist/*
-
-# 3. Commit, tag, push. The first commit includes the 91.78 MiB checkpoint - be patient.
-git add -A && git commit -m "sahu65 1.0.0"
-git tag v1.0.0 && git push origin main --tags
-
-# 4. Publish the GitHub Release (this triggers the upload)
-gh release create v1.0.0 --title "v1.0.0" --notes "..."
+python scripts/bump_version.py patch --dry-run   # preview: 1.0.0 -> 1.0.1
+python scripts/bump_version.py patch             # or: minor | major | 1.2.3
+git add -A && git commit -m "sahu65 1.0.1"
+git push                                         # push to main -> build + publish
 ```
 
-Or trigger manually: **Actions → Publish to PyPI → Run workflow**, typing `publish` to
-confirm.
+Watch it land: **Actions → CI → publish to PyPI**; the job finishes by confirming
+`sahu65 <version>` is live at <https://pypi.org/project/sahu65/>.
 
 ### What the workflow does
 
-`ci.yml` (every push/PR) → ruff, pytest, then build + `twine check` + `verify_dist.py`.
-`publish.yml` (release or manual) → checkout, build, verify, `twine check`, **smoke-test
-the built wheel in a clean venv**, upload, then poll PyPI to confirm the release landed.
+`ci.yml` (every push/PR) → ruff, pytest, checkpoint guard, then build +
+`verify_dist.py` + `twine check` + **smoke-test the built wheel in a clean venv**. On a
+push to `main`/`master` a final `publish` job downloads those exact verified artifacts,
+authenticates with `PYPI_API_TOKEN`, uploads with `skip-existing: true`, then polls
+PyPI until the built version is visible. A missing secret fails the job with an
+actionable error before anything is uploaded.
 
 `scripts/verify_dist.py` is the guard that matters most. It fails the run *before* upload
 if the checkpoint is missing from the wheel, if any artifact exceeds PyPI's 100 MiB
