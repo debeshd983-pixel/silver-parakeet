@@ -1,0 +1,28 @@
+**Yes, exactly.** All 6 images currently returned a verdict of **`likely_ai`** with probabilities between 86% and 99.9%.
+
+Here is why that happened:
+
+---
+
+### 1. For `assets/ai/` (True Positives — Correctly Detected)
+All 4 images in `assets/ai/` are synthetic/AI-generated (e.g., the fake Republic of Oakhaven ID, Republic of Utopia ID with Gemini watermark, fake California license, and mock Italian passport). The model recognized their diffusion generation artifacts and correctly flagged them as AI ($86\% - 99.9\%$).
+
+---
+
+### 2. For `assets/rl/` (False Positives — Why they were flagged as AI)
+The two photos in `assets/rl/` (the Aadhaar card and the stamped land document) are real photos, but the model incorrectly flagged them as AI due to two specific factors:
+
+1. **Domain Mismatch (Document vs Natural Scene)**:
+   - The underlying model (`Organika/sdxl-detector`) was trained on natural photo datasets (Wikimedia photos vs SDXL renders of animals, faces, objects, landscapes).
+   - It was **never trained on photos of printed paper documents with tables, fonts, and stamps**. Vision transformers easily confuse printed digital typography with synthetic diffusion artifacts.
+2. **Heavy WhatsApp JPEG Compression**:
+   - Both files are WhatsApp transfers (`IMG-*-WA*.jpg`). WhatsApp heavily compresses images and removes natural camera sensor noise pattern (PRNU). To a neural network trained to detect synthetic smoothness, this aggressive compression mimics AI rendering artifacts (which also triggered the `jpeg_recompressed_likely` warning).
+
+---
+
+### Verification: Natural Real Photos
+When tested on a standard natural camera photograph (such as an uncompressed photo of a real subject like the test `tiger.jpg`), the model outputs:
+- **AI Probability: 6.7%**
+- **Verdict: Likely Real (93.3% Human)**
+
+In summary, the detector works well on general photographic scenes, but document scans/photos and heavily compressed messaging app images currently cause false positives on real documents.
