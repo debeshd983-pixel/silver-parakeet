@@ -3,10 +3,15 @@
     sahu65 detect photo.jpg            # local inference, bundled model
     sahu65 serve --port 8000           # run the HTTP API
     sahu65 info                        # bundled checkpoint + threshold state
+    sahu65 --key myapp                 # mint a Bear Token (API key), printed once
+    sahu65 --key-myapp                 # sugar for --key myapp
+    sahu65 --list-keys                 # names of minted tokens, never the tokens
 """
 import argparse
 import json
 import sys
+
+_KEY_SUGAR_PREFIX = "--key-"
 
 
 def _cmd_detect(args) -> int:
@@ -60,9 +65,58 @@ def _cmd_info(args) -> int:
     return 0
 
 
+def _cmd_key(args) -> int:
+    from .keys import create_key, keyfile_path
+
+    token, rotated = create_key(args.key)
+    print(f"Bear Token minted: {args.key}")
+    print(f"  token : {token}")
+    print(f"  store : {keyfile_path()} (SHA-256 digest only)")
+    if rotated:
+        print("  NOTE   : a token with this name already existed - it has been rotated")
+        print("           and the previous token no longer works.")
+    print()
+    print("This token is shown ONCE. Use it as either request header:")
+    print(f'  Authorization: Bearer {token}')
+    print(f'  X-API-Key: {token}')
+    print()
+    print("In code:")
+    print('  from sahu65 import Client')
+    print(f'  client = Client(api_key="{token}", base_url="http://localhost:8000")')
+    print("  export SAHU65_API_KEY=<token>   # picks it up automatically")
+    return 0
+
+
+def _cmd_list_keys(args) -> int:
+    from .keys import keyfile_path, list_keys
+
+    keys = list_keys()
+    print(f"key store: {keyfile_path()}")
+    if not keys:
+        print("no Bear Tokens minted yet - run `sahu65 --key <name>`")
+        return 0
+    for record in keys:
+        created = record["created"] or "unknown"
+        print(f"  {record['name']}  (minted {created})")
+    print(f"{len(keys)} token(s). Tokens themselves are never printed here.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sahu65", description="AI-generated image detection")
-    sub = p.add_subparsers(dest="command", required=True)
+    p.add_argument(
+        "--key",
+        metavar="NAME",
+        help="mint a Bear Token (API key) named NAME for POST /deep-guard/detect and exit; "
+        "also accepted as --key-NAME",
+    )
+    p.add_argument(
+        "--list-keys",
+        action="store_true",
+        help="list minted Bear Token names (never the tokens) and exit",
+    )
+    # Not required: `sahu65 --key myapp` / `sahu65 --list-keys` are flag-only invocations.
+    sub = p.add_subparsers(dest="command")
 
     d = sub.add_parser("detect", help="detect on a local image using the bundled model")
     d.add_argument("image", help="path to a JPEG, PNG or WebP file")
@@ -81,9 +135,33 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _expand_key_sugar(argv):
+    """Rewrite ``--key-NAME`` into ``--key NAME``.
+
+    Lets `sahu65 --key-myapp` work as sugar for `sahu65 --key myapp`. A bare
+    ``--key`` (or ``--key=NAME``) is left for argparse to handle normally.
+    """
+    out = []
+    for arg in argv:
+        if arg.startswith(_KEY_SUGAR_PREFIX) and len(arg) > len(_KEY_SUGAR_PREFIX):
+            out.extend(["--key", arg[len(_KEY_SUGAR_PREFIX):]])
+        else:
+            out.append(arg)
+    return out
+
+
 def main(argv=None) -> int:
-    args = build_parser().parse_args(argv)
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
+    parser = build_parser()
+    args = parser.parse_args(_expand_key_sugar(argv))
     try:
+        if getattr(args, "key", None):
+            return _cmd_key(args)
+        if getattr(args, "list_keys", False):
+            return _cmd_list_keys(args)
+        if not getattr(args, "func", None):
+            parser.print_help()
+            return 2
         return args.func(args)
     except FileNotFoundError as e:
         print(f"error: {e}", file=sys.stderr)

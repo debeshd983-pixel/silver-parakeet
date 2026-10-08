@@ -104,3 +104,19 @@ These supersede the P1 and P2 entries.
 - Unit tests for logit math, threshold bounds, confidence policy, magic bytes, and pixel bomb limits.
 - Integration test suite for all FastAPI endpoints (`/v1/detect`, `/healthz`, `/readyz`, `/version`) verifying status codes and error shapes.
 - Final user instruction applied: "ship the final product code for python 3.11.6 do not verify just give me the code and push it fast".
+
+## P9 — 2026-10-08 — Bear Token API-key system (v1.0.12)
+
+- Decision: named API keys ("Bear Tokens") minted by `sahu65 --key <name>`, stored as
+  SHA-256 digests only in `~/.sahu65/keys.json` (env `SAHU65_KEYFILE`). Reason: a leaked
+  key file must not yield replayable secrets - the plaintext token is shown once, at
+  mint time, the way credential-bearing CLI tools normally behave.
+- Decision: accept both `Authorization: Bearer` and the original `X-API-Key`, and check
+  auth before readiness on `/detect`. Reason: backwards compatibility with the shipped
+  client and the `API_KEYS` env mechanism; 401-before-503 stops model-state leakage to
+  unauthenticated callers.
+- Decision: leave the legacy `app/` tree untouched. Evidence: only `scripts/_*.py`
+  import it; the Dockerfile and the wheel ship `sahu65/` (pyproject
+  `packages.find include = ["sahu65*"]`).
+- Verified: `ruff check sahu65 tests scripts` clean; `pytest tests/test_keys.py` ->
+  14 passed; full suite + build pipeline run before push.

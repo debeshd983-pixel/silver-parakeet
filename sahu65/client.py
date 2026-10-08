@@ -1,7 +1,7 @@
 """Client for a hosted sahu65 deployment (API-key authenticated).
 
     from sahu65 import Client
-    c = Client(api_key="sk-...", base_url="https://your-host")
+    c = Client(api_key="bear_...", base_url="https://your-host")  # sahu65 --key <name>
     result = c.detect("photo.jpg")
 """
 import os
@@ -56,6 +56,9 @@ class Client:
     def _headers(self) -> Dict[str, str]:
         h = {}
         if self.api_key:
+            # Both headers: Bearer is the preferred form, X-API-Key is kept so an
+            # older server that only knows the original header still authenticates.
+            h["Authorization"] = f"Bearer {self.api_key}"
             h["X-API-Key"] = self.api_key
         return h
 

@@ -67,9 +67,11 @@ async def lifespan(app: FastAPI):
     load_configs(settings)
 
     from sahu65.core.limits import rate_limiter
+    from sahu65.keys import describe as describe_auth
 
     rate_limiter.configure(settings.rate_limit)
     log.info(f"Rate limit: {rate_limiter.describe()}")
+    log.info(f"API auth: {describe_auth(settings.api_keys)}")
 
     RUNTIME_MGR = RuntimeManager(settings)
     CLASSIFIER = ClassifierService(settings)

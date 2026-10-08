@@ -13,6 +13,7 @@ from sahu65.core.limits import (
     rate_limiter,
     read_and_validate_file,
 )
+from sahu65.keys import auth_configured, verify
 from sahu65.core.logging import logger
 import sahu65.main as main_module
 from sahu65.schemas import (
@@ -38,6 +39,21 @@ from sahu65.services.provenance import extract_c2pa_provenance
 API_PREFIX = "/deep-guard"
 
 router = APIRouter(prefix=API_PREFIX)
+
+
+def _bearer_token(authorization: Optional[str]) -> Optional[str]:
+    """Extract the token from an ``Authorization: Bearer <token>`` header.
+
+    Returns None for a missing header or any other scheme, so a client sending
+    ``Basic ...`` or a bare token is simply treated as unauthenticated rather
+    than erroring.
+    """
+    if not authorization:
+        return None
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return None
+    return token.strip() or None
 
 
 @router.get("/healthz")
@@ -100,28 +116,35 @@ async def detect(
     request: Request,
     file: UploadFile = File(...),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
 ):
     """Detects whether an uploaded image is AI-generated with calibrated probability and explicit abstain band."""
     start_time = time.time()
     req_id = uuid.uuid4().hex[:12]
     settings = get_settings()
 
-    # 1. Check readiness
+    # 1. Authenticate BEFORE readiness, so an unauthenticated caller learns nothing
+    # about model state. Enforced once at least one Bear Token exists (minted with
+    # `sahu65 --key <name>`, stored as SHA-256 digests) or API_KEYS is set; with
+    # none, the endpoint stays open exactly as it was before Bear Tokens shipped.
+    # Either header is accepted: Authorization: Bearer <token> (preferred) or
+    # X-API-Key: <token> (original, kept for compatibility).
+    presented = _bearer_token(authorization) or x_api_key
+    auth_on = auth_configured(settings.api_keys)
+    if auth_on and not verify(presented, settings.api_keys):
+        raise UnauthorizedError()
+
+    # 2. Check readiness
     if not main_module.READY:
         return JSONResponse(
             status_code=503,
             content={"error": {"code": "model_not_ready", "message": "Models are loading"}},
         )
 
-    # 2. Check API Key authentication if configured
-    if settings.api_keys:
-        allowed_keys = {k.strip() for k in settings.api_keys.split(",") if k.strip()}
-        if not x_api_key or x_api_key not in allowed_keys:
-            raise UnauthorizedError()
-
-    # 3. Rate limiting check
+    # 3. Rate limiting check. Bucketed by the token only when it actually verified -
+    # an unauthenticated caller cannot dodge the limit by varying a header.
     client_ip = request.client.host if request.client else "unknown"
-    rate_key = x_api_key or client_ip
+    rate_key = presented if auth_on else client_ip
     if not rate_limiter.check(rate_key):
         raise RateLimitedError(f"Rate limit of {rate_limiter.describe()} exceeded")
 

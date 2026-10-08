@@ -7,15 +7,17 @@ Local, no server and no API key (weights are bundled, ~92 MB)::
     import sahu65
     result = sahu65.detect("photo.jpg")
 
-Against a hosted deployment with an API key::
+Against a hosted deployment with an API key (a "Bear Token", minted with
+``sahu65 --key <name>``)::
 
     from sahu65 import Client
-    result = Client(api_key="sk-...").detect("photo.jpg")
+    result = Client(api_key="bear_...").detect("photo.jpg")
 
 Or from a shell::
 
     sahu65 detect photo.jpg
     sahu65 serve --port 8000
+    sahu65 --key myapp          # mint an API key for the server
 
 .. warning::
    The bundled model is a **natural-image** diffusion detector. Measured AUC on
@@ -26,7 +28,7 @@ Or from a shell::
 """
 from .local import Detection, LocalDetector, detect, detect_bytes, model_info, warm
 
-__version__ = "1.0.0"
+__version__ = "1.0.12"
 
 __all__ = [
     "Detection",

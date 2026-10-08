@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sahu65"
-version = "1.0.0"
+version = "1.0.12"
 description = "AI-generated image detection: local model or hosted API. NOT proof - see MODEL_CARD.md."
 readme = "README.md"
 requires-python = ">=3.9,<3.14"

@@ -189,6 +189,33 @@ every push rebuilds and verifies but only a new version actually reaches PyPI.
 
 ---
 
+## Bear Token API-key auth (v1.0.12, 2026-10-08)
+
+`sahu65 --key <name>` (or the sugar form `sahu65 --key-<name>`) mints a named token
+(`bear_<name>_<random>`) and prints it once. Only its **SHA-256 digest** is written to
+`~/.sahu65/keys.json` (override: `SAHU65_KEYFILE`; 0600 file / 0700 dir best effort on
+POSIX). `sahu65 --list-keys` prints names and dates only. Re-minting a name rotates the
+token — the previous one stops working.
+
+- `POST /deep-guard/detect` accepts `Authorization: Bearer <token>` **and** the original
+  `X-API-Key`. Auth is enforced once any key exists (file-backed or `API_KEYS`) and runs
+  **before** the readiness check, so a 401 no longer leaks model state. With zero keys
+  the endpoint stays open, exactly as before.
+- The store is re-read on mtime change, so minting a token while the server runs takes
+  effect without a restart.
+- **Hardened:** when no token verifies, the rate limiter now buckets by client IP only.
+  Previously an unauthenticated caller could send any `X-API-Key` value and get a fresh
+  rate-limit bucket per request.
+- `Client` now sends both headers (Bearer preferred, `X-API-Key` kept so older servers
+  still authenticate).
+- The legacy `app/` tree was deliberately **not** modified: nothing ships it (Dockerfile
+  and pyproject package `sahu65/` only; `app/` is referenced solely by `scripts/_*.py`
+  diagnostics), and diverging it further from `sahu65/` would add confusion, not value.
+- Tests: `tests/test_keys.py` — 14 cases covering mint/rotate, digest-only storage,
+  CLI sugar and listing, and the full 401/accept matrix on `/deep-guard/detect`.
+
+---
+
 ## ⚠ Open items before this repo goes public
 
 1. **`assets/rl/` contains an Aadhaar card and a stamped land record.** Sensitive personal

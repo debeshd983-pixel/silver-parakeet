@@ -47,7 +47,9 @@ A lightweight, CPU-only AI-generated image detection service and Python package 
   `id2label` at load time, never hardcoded. Pinned by `tests/test_classifier.py`.
 - **Honest Abstain Band:** explicit `inconclusive` zone ($T_{lo} \le p \le T_{hi}$).
 - **Production-Ready:** streamed uploads with size caps, magic-byte sniffing, decompression
-  bomb guards, structured JSON logging (zero image persistence), and rate limiting.
+  bomb guards, structured JSON logging (zero image persistence), rate limiting, and
+  **Bear Token API-key auth** (`sahu65 --key <name>`; `Authorization: Bearer` or
+  `X-API-Key`).
 
 ### Measured behaviour (2026-10-07)
 
@@ -87,7 +89,7 @@ if "out_of_domain_flat_text_heavy" in result.warnings:
 ```python
 from sahu65 import Client
 
-client = Client(api_key="sk-...")            # or set SAHU65_API_KEY / SAHU65_BASE_URL
+client = Client(api_key="bear_...")            # sahu65 --key <name>; or set SAHU65_API_KEY / SAHU65_BASE_URL
 client.wait_until_ready(timeout_s=120)       # useful right after a cold start
 result = client.detect("photo.jpg")
 ```
@@ -99,6 +101,8 @@ sahu65 detect photo.jpg        # local inference
 sahu65 detect photo.jpg --json # JSON output
 sahu65 serve --port 8000       # HTTP API
 sahu65 info                    # bundled checkpoint + threshold state
+sahu65 --key myapp             # mint a Bear Token (API key), printed once
+sahu65 --list-keys             # list minted token names (never the tokens)
 ```
 
 ### Self-host the API
@@ -107,9 +111,35 @@ sahu65 info                    # bundled checkpoint + threshold state
 uvicorn sahu65.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
-Authenticate with `X-API-Key` once `API_KEYS` is set. **Gate traffic on
-`/deep-guard/readyz`, not `/deep-guard/healthz`** — `/deep-guard/readyz` is 503 until the
-real weights are resident, and it reports `model_load_failed` if the checkpoint is missing.
+**Gate traffic on `/deep-guard/readyz`, not `/deep-guard/healthz`** — `/deep-guard/readyz`
+is 503 until the real weights are resident, and it reports `model_load_failed` if the
+checkpoint is missing.
+
+### Bear Tokens (API keys)
+
+`POST /deep-guard/detect` is open by default. The moment **one** key exists — minted
+with the CLI or set via `API_KEYS` — every detect call must present it, otherwise the
+response is `401 unauthorized` with `{"error": {"code": "unauthorized"}}`:
+
+```bash
+sahu65 --key myapp                          # prints the token ONCE; stores its SHA-256 only
+curl -X POST http://localhost:8000/deep-guard/detect \
+  -H "Authorization: Bearer bear_myapp_..." \
+  -F "file=@sample.jpg"
+# equivalent: -H "X-API-Key: bear_myapp_..."
+```
+
+- Tokens are stored in `~/.sahu65/keys.json` (override: `SAHU65_KEYFILE`) as **SHA-256
+  digests only** — a leaked key file cannot be replayed. The plaintext token is shown
+  exactly once, at mint time; `sahu65 --list-keys` shows names and dates only.
+- Re-running `sahu65 --key myapp` **rotates** the token: the previous one stops working.
+- The store is re-read whenever the file changes, so a token minted while the server is
+  running takes effect immediately — no restart needed.
+- `API_KEYS=k1,k2` (comma-separated plaintext, the original mechanism) still works
+  alongside minted tokens.
+- SDK: `Client(api_key="bear_...")` or `export SAHU65_API_KEY=bear_...`.
+- Auth is checked **before** readiness on `/detect`, so unauthenticated callers learn
+  nothing about model state. `/healthz`, `/readyz` and `/version` stay open for probes.
 
 ### 2. Run with Docker
 
@@ -139,6 +169,10 @@ All routes are mounted under the **`/deep-guard`** prefix.
 Accepts multipart form-data with an image file (`JPEG`, `PNG`, `WebP`).
 
 **Example Request:**
+
+When a Bear Token is configured, add `-H "Authorization: Bearer <token>"` (or
+`-H "X-API-Key: <token>"`); without any key configured, no header is needed.
+
 ```bash
 curl -X POST http://localhost:8000/deep-guard/detect \
   -F "file=@sample.jpg"
@@ -192,7 +226,8 @@ All configuration is handled via environment variables (see `sahu65/config.py`):
 | `RATE_LIMIT` | `30/minute` | Rate limiter window per IP/key |
 | `REQUIRE_REAL_MODEL` | `true` | Refuse to become ready if the S2 checkpoint is missing |
 | `DOCUMENT_GATE` | `false` | **UNVALIDATED, opt-in.** Suppress confident verdicts to `inconclusive` on flat/text-heavy out-of-distribution input. See below. |
-| `API_KEYS` | `""` | Comma-separated allowed keys for `X-API-Key` header |
+| `API_KEYS` | `""` | Comma-separated plaintext keys accepted alongside minted Bear Tokens; any non-empty value enables auth |
+| `SAHU65_KEYFILE` | `~/.sahu65/keys.json` | Bear Token store — SHA-256 digests only, never plaintext tokens |
 | `ALLOWED_ORIGINS` | `""` | CORS allowed origins |
 
 ### `DOCUMENT_GATE` (opt-in, unvalidated)

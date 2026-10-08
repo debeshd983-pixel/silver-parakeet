@@ -241,7 +241,7 @@ If targets are missed, the order of fixes is: confirm int8 is in use, reduce dec
 - Hard request body limit enforced at the server level, not only after reading.
 - Per-request timeout (default 15 s).
 - Images are processed in memory and **never written to disk or logged**. Logs contain request ID, sizes, timings, verdict, and optionally a short SHA-256 prefix.
-- Optional API key via header `X-API-Key` (env `API_KEYS`, comma-separated). Rate limiting by key or IP.
+- Optional **Bear Token** auth on `/deep-guard/detect`: named keys minted with `sahu65 --key <name>` (stored as SHA-256 digests in `SAHU65_KEYFILE`, default `~/.sahu65/keys.json`) or plaintext `API_KEYS`, presented via `Authorization: Bearer` (preferred) or `X-API-Key`. Checked before readiness. Rate limiting by verified token or IP.
 - CORS locked to `ALLOWED_ORIGINS`.
 - Container runs as a non-root user with a read-only filesystem where the platform allows.
 - Dependencies pinned; run `pip-audit` in CI.
