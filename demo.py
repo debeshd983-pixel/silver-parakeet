@@ -3,6 +3,7 @@
     python demo.py                  # scan the assets/ folder next to this file
     python demo.py some/other/dir    # scan any directory (searched recursively)
     python demo.py --json            # one JSON object per image instead of a table
+    python demo.py --csv out.csv     # save every result as CSV rows (tabular)
 
 Local inference - no server and no API key: the ~92 MB checkpoint ships inside the
 package, so the first call spends ~10 s loading the ONNX session and every image
@@ -15,6 +16,7 @@ Exit codes: 0 = every image scanned (regardless of verdict), 1 = no directory /
 no images / at least one image failed to scan.
 """
 import argparse
+import csv
 import json
 import sys
 import time
@@ -24,6 +26,18 @@ import sahu65
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 AI_VERDICTS = {"likely_ai", "ai_generated_verified"}
+CSV_FIELDS = [
+    "path",
+    "verdict",
+    "ai_probability",
+    "confidence",
+    "classifier_probability",
+    "c2pa_present",
+    "c2pa_ai_declared",
+    "warnings",
+    "latency_ms",
+    "error",
+]
 
 
 def find_images(root: Path):
@@ -48,6 +62,11 @@ def main() -> int:
         help="directory to scan recursively (default: assets/ next to this script)",
     )
     parser.add_argument("--json", action="store_true", help="emit one JSON object per image")
+    parser.add_argument(
+        "--csv",
+        metavar="PATH",
+        help="write every result as CSV rows (header + one row per image) to PATH",
+    )
     args = parser.parse_args()
 
     root = Path(args.directory).resolve()
@@ -68,6 +87,7 @@ def main() -> int:
 
     counts = {"ai": 0, "real": 0, "inconclusive": 0, "error": 0}
     errors = 0
+    rows = []
 
     for path in images:
         rel = path.relative_to(root)
@@ -76,6 +96,7 @@ def main() -> int:
         except Exception as e:
             errors += 1
             counts["error"] += 1
+            rows.append({"path": str(rel), "error": f"{type(e).__name__}: {e}"})
             if args.json:
                 print(json.dumps({"path": str(rel), "error": f"{type(e).__name__}: {e}"}))
             else:
@@ -83,6 +104,20 @@ def main() -> int:
             continue
 
         counts[category(r.verdict)] += 1
+        rows.append(
+            {
+                "path": str(rel),
+                "verdict": r.verdict,
+                "ai_probability": r.ai_probability,
+                "confidence": r.confidence,
+                "classifier_probability": r.classifier_probability,
+                "c2pa_present": r.c2pa_present,
+                "c2pa_ai_declared": r.c2pa_ai_declared,
+                "warnings": ";".join(r.warnings),
+                "latency_ms": r.latency_ms,
+                "error": "",
+            }
+        )
         if args.json:
             print(json.dumps({"path": str(rel), **r.to_dict()}))
             continue
@@ -92,6 +127,14 @@ def main() -> int:
             f"  {str(rel):<42} {r.verdict:<15} p={r.ai_probability:.4f}"
             f"  conf={r.confidence:<6} {r.latency_ms:7.1f}ms{warnings}"
         )
+
+    if args.csv:
+        out = Path(args.csv)
+        with out.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=CSV_FIELDS, restval="")
+            writer.writeheader()
+            writer.writerows(rows)
+        print(f"\nwrote {len(rows)} row(s) to {out.resolve()}", file=sys.stderr)
 
     if not args.json:
         print()
