@@ -5,7 +5,7 @@ rather than as an opaque rejection from PyPI.
 
 Checks:
   1. both the wheel and the sdist were produced
-  2. the wheel actually contains the INT8 checkpoint (a 37 KB model-less wheel was
+  2. the wheel actually contains the INT8 CLIP encoder (a 37 KB model-less wheel was
      produced once by a MANIFEST.in exclude leaking into the wheel build)
   3. bundled JSON configs are present in the wheel
   4. every artifact is under PyPI's 100 MiB per-file upload limit
@@ -17,12 +17,13 @@ import zipfile
 from pathlib import Path
 
 PYPI_MAX_BYTES = 100 * 1024 * 1024  # PyPI rejects files larger than 100 MiB
-CHECKPOINT = "sahu65/models/classifier.int8.onnx"
+CHECKPOINT = "sahu65/models/clip_encoder.int8.onnx"
 CONFIGS = (
     "sahu65/config/thresholds.json",
     "sahu65/config/fusion.json",
-    "sahu65/models/config.json",
-    "sahu65/models/preprocessor_config.json",
+    # The fitted probe head. Without it the package installs and then refuses to become
+    # ready, so it is checked exactly as strictly as the encoder.
+    "sahu65/models/clip_head.json",
 )
 MIN_CHECKPOINT_BYTES = 50 * 1024 * 1024  # guard against a truncated/placeholder file
 

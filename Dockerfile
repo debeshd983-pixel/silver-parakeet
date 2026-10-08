@@ -23,8 +23,10 @@ RUN pip install --no-cache-dir .
 # Verify no torch leaked into the runtime image.
 RUN python -c "import sys; sys.exit(1) if 'torch' in sys.modules else None"
 
-# Verify the bundled checkpoint loads and reports a sane label mapping.
-RUN python -c "import sahu65; i=sahu65.model_info(); assert i['loaded'] and i['ai_class_index']==0, i"
+# Verify the bundled encoder and head load, and that the head matches the encoder.
+# The retired classifier exposed ai_class_index here; the probe instead emits 512-d
+# embeddings, so that is what gets asserted.
+RUN python -c "import sahu65; i=sahu65.model_info(); assert i['loaded'] and i['embed_dim']==512, i"
 
 USER appuser
 

@@ -19,8 +19,10 @@ class ModelSignal(BaseModel):
 
 class SignalsResponse(BaseModel):
     c2pa: C2PASignal
-    classifier: ModelSignal
-    clip_probe: ModelSignal
+    # The single shipped detector: a linear probe on a frozen CLIP encoder. This field was
+    # named `classifier` while a second, fine-tuned classifier also ran; it is now the
+    # only model, and the old name would misdescribe it.
+    detector: ModelSignal
 
 
 class DetectionResponse(BaseModel):
@@ -35,6 +37,11 @@ class DetectionResponse(BaseModel):
     out_of_domain: bool = False
     model_version: str
     benchmark_id: Optional[str] = None
+    calibrated: bool = False
+    # Plain-language narration, present only when an LLM provider is configured and the
+    # request asked for it. Purely additive: it never alters the fields above.
+    explanation: Optional[str] = None
+    explanation_provider: Optional[str] = None
     latency_ms: float
 
 
@@ -55,3 +62,6 @@ class VersionResponse(BaseModel):
     models: Dict[str, str]
     # False means T_lo/T_hi are unfitted placeholders and the probability is UNCALIBRATED.
     calibrated: bool
+    # Whether a plain-language narration provider is configured. Reports the provider and
+    # model name only; never the key.
+    explanation: Dict[str, Any] = Field(default_factory=dict)

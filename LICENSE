@@ -1,4 +1,4 @@
-MIT License
+﻿MIT License
 
 Copyright (c) 2026 sahu65 contributors
 
@@ -23,25 +23,27 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRA
 TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 
-== BUNDLED MODEL WEIGHTS (IMPORTANT - DIFFERENT LICENSE) ==
+== BUNDLED MODEL WEIGHTS ==
 
-`sahu65/models/classifier.int8.onnx` is a dynamically INT8-quantized export of
-`Organika/sdxl-detector` (Swin-T image classifier).
+`sahu65/models/clip_encoder.int8.onnx` is an INT8 dynamically-quantized export of the
+image tower of `openai/clip-vit-base-patch16` (CLIP ViT-B/16), revision
+`57c216476eefef5ab752ec549e440a49ae4ae5f3`. `sahu65/models/clip_head.json` holds 512 probe
+weights and a bias fitted by this project.
 
-That upstream model is licensed **Creative Commons Attribution-NonCommercial 3.0
-Unported (CC BY-NC 3.0)** — NOT MIT, and NOT Apache-2.0.
+The upstream OpenAI CLIP model is distributed under the MIT License. The Hugging Face Hub
+metadata for the repository declares no licence field, so that is recorded here as stated by
+the upstream model card rather than asserted: confirm the licence with OpenAI/Microsoft
+before a commercial release if that matters to you.
 
 Consequences for anyone installing or redistributing this package:
 
-  * The bundled weights may be used only for **non-commercial** purposes.
-  * Commercial use of anything shipped in this package is **not permitted** without
-    replacing `sahu65/models/classifier.int8.onnx` with a permissively licensed
-    checkpoint and re-tuning the thresholds.
-  * Attribution to `Organika/sdxl-detector` is required.
+  * The bundled weights are expected to be usable commercially. If you need certainty,
+    verify the upstream terms first.
+  * The previous release bundled `Organika/sdxl-detector` (Swin-T), licensed
+    **CC BY-NC 3.0** -- non-commercial. That restriction applied to everything shipped in
+    the package. It was removed in 2026.11.0 by replacing that checkpoint with the CLIP
+    probe; see MODEL_CARD.md 1 for the measured comparison. Earlier revisions of this
+    LICENSE, README and MODEL_CARD incorrectly recorded the sdxl-detector checkpoint as
+    Apache-2.0 and stated that commercial use was permitted. That was wrong.
 
-The CC BY-NC 3.0 license text is available at:
-https://creativecommons.org/licenses/by-nc/3.0/legalcode
-
-Earlier revisions of this project's documentation incorrectly recorded this checkpoint as
-Apache-2.0 and described commercial use as permitted. That was wrong and has been
-corrected.
+The MIT License text for the encoder is reproduced above, under "== CODE ==".

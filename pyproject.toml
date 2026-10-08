@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sahu65"
-version = "1.0.12"
+version = "1.1.0"
 description = "AI-generated image detection: local model or hosted API. NOT proof - see MODEL_CARD.md."
 readme = "README.md"
 requires-python = ">=3.9,<3.14"
-license = { text = "MIT (code); CC-BY-NC-3.0 (bundled model weights) - see LICENSE" }
+license = { text = "MIT (code); CLIP ViT-B/16 weights - see LICENSE" }
 authors = [{ name = "sahu65" }]
 keywords = ["deepfake", "ai-generated", "image-forensics", "detection", "c2pa"]
 classifiers = [
@@ -77,9 +77,8 @@ exclude = ["tests*", "scripts*", "assets*"]
 
 [tool.setuptools.package-data]
 sahu65 = [
-    "models/classifier.int8.onnx",
-    "models/config.json",
-    "models/preprocessor_config.json",
+    "models/clip_encoder.int8.onnx",
+    "models/clip_head.json",
     "config/thresholds.json",
     "config/fusion.json",
 ]

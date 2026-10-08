@@ -83,8 +83,9 @@ def test_detect_valid_image(client):
     assert 0.0 <= data["ai_probability"] <= 1.0
     assert data["confidence"] in ["high", "medium", "low"]
     assert "signals" in data
-    assert "classifier" in data["signals"]
-    assert "clip_probe" in data["signals"]
+    assert "detector" in data["signals"]
+    assert 0.0 <= data["signals"]["detector"]["probability"] <= 1.0
+    assert data["signals"]["c2pa"]["present"] in (True, False)
     assert "latency_ms" in data
 
 

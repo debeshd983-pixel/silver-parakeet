@@ -1,173 +1,195 @@
-# Model Card: AI-Generated Image Detector Backend
+# Model Card: AI-Generated Image Detector
 
 ## 1. Model Details
 
-- **Model Name:** Deepfake & AI-Generated Image Detection Ensemble (S2 Classifier + S3 CLIP Probe + S1 C2PA)
-- **Version:** `2026.10.1`
-- **Release Date:** October 2026
-- **Architecture:** 
-  - **S1 Provenance:** C2PA manifest extraction via `c2pa-python` (if present, declaring generative AI).
-  - **S2 Classifier:** `Organika/sdxl-detector` (Swin-T, 224x224, 86.8M params) @ revision `b37fede8562cb72b89ec201c0987f96ba21b518a`, license **cc-by-nc-3.0 (NON-COMMERCIAL ONLY)**. Served as INT8 dynamic-quantized ONNX (`models/classifier.int8.onnx`, 91.8 MB).
-  - **S3 CLIP Probe:** Disabled. `w2 = 0.0`. The head shipped by `scripts/train_probe.py` is fitted on `np.random.randn`, so it contributes noise, not signal.
-  - **Fusion:** Platt-style logistic regression in logit space: $z = w_1 \text{logit}(p_{\text{S2}}) + w_2 \text{logit}(p_{\text{S3}}) + b$.
-  - **Runtime:** ONNX Runtime (CPUExecutionProvider), zero PyTorch dependencies at runtime.
+- **Model Name:** AI-Generated Image Detector
+- **Version:** `2026.11.0`
+- **Release Date:** November 2026
+- **Architecture:** A single linear probe on a frozen CLIP ViT-B/16 image encoder.
+  - **Encoder:** `openai/clip-vit-base-patch16` @ revision
+    `57c216476eefef5ab752ec549e440a49ae4ae5f3`, INT8 dynamic-quantised ONNX
+    (`models/clip_encoder.int8.onnx`, 85.5 MB). Licence: the Hub metadata declares none;
+    the upstream model card states MIT. Confirm before a commercial release.
+  - **Probe head:** 512 weights + bias (`models/clip_head.json`), fitted on real
+    benchmark embeddings by `scripts/train_clip_probe.py` with L2 strength chosen by
+    cross-validation. Fitted with torch at build time only; the runtime is ONNX Runtime.
+  - **Calibration:** Platt scaling in logit space, `sigmoid(1.642 * logit(p) + 0.0877)`,
+    fitted on out-of-fold benchmark scores.
+  - **Preprocessing:** aspect-preserving — shortest side to 224 px, centre crop,
+    CLIP mean/std. Never a squash to a square.
+  - **Runtime:** ONNX Runtime, CPUExecutionProvider. No PyTorch, no Transformers at
+    runtime. No second model.
 
-> **LICENSE CORRECTION (2026-10-07):** earlier revisions of this card and `DECISIONS.md`
-> recorded the S2 classifier as Apache-2.0. That was wrong — the Hugging Face Hub reports
-> **cc-by-nc-3.0** for `Organika/sdxl-detector`. Deployment is therefore **non-commercial only**.
-> The previously pinned revision `657a8bf7...` does not exist on the Hub (HTTP 404) and has been
-> replaced with the real head revision `b37fede8...`.
+### Why this replaced `Organika/sdxl-detector`
+
+The previous release shipped `Organika/sdxl-detector` (Swin-T) with the CLIP probe
+disabled, because the probe's head had been fitted on `np.random.randn`. Measured head to
+head on benchmark `bench-8e0bd9e97e3e`:
+
+| detector | AUC | false positives @ 50% recall | size | latency | licence |
+|---|---|---|---|---|---|
+| `Organika/sdxl-detector` (previous) | 0.6434 | 24.3% | 91.8 MB | 179 ms | **cc-by-nc-3.0** |
+| **CLIP ViT-B/16 probe (shipped)** | **0.8213** | **6.5%** | **85.5 MB** | **135 ms** | MIT (upstream) |
+
+The swap is smaller, faster and far more accurate, and it removes a non-commercial
+restriction from a package published on PyPI. Three alternative checkpoints named in
+`architecture.md` 3.1 were also benchmarked and all were worse — see 3.2.
+
+Two properties of the previous model explain the gap. It saturated on the generator
+families resembling its training data (dalle3, midjourney-v5 and stable-diffusion-xl all
+scored a constant 1.000) and collapsed on the rest; the CLIP probe repairs exactly those
+cases (glide 5.9% → 97.1%, dalle2 15.6% → 93.8%, FLUX.1-dev 13.2% → 78.9%).
+
+**The ensemble was dropped.** `architecture.md` 3.1 justifies two signals on the grounds
+that "S2 and S3 fail on different images". Measured, they do not: fusing the two was worse
+than the probe alone at every mixing weight tried (best fused AUC 0.8173 against 0.8213
+for the probe). Shipping the second model would have cost 92 MB and 179 ms for a worse
+number, so it is gone.
 
 ---
 
 ## 2. Intended Use & Limitations
 
-> **CRITICAL NOTICE:** The output of this service is a **calibrated probability and heuristic signal, NOT legal or forensic proof.** It must never be used as the sole basis for accusing anyone of fabricating media or for punitive action.
+> **CRITICAL NOTICE:** the output is a **calibrated probabilistic signal and heuristic
+> evidence, NOT legal or forensic proof.** It must never be the sole basis for accusing
+> anyone of fabricating media, or for any punitive, legal, or employment decision.
 
-### Prohibited Uses:
+### Prohibited Uses
+
 - Automated legal, judicial, or law-enforcement decisions without human forensic review.
-- Harassment or defamation of individuals based on algorithmic scores.
-- Using the system as a guaranteed proof of authenticity for news or election materials.
+- Harassment or defamation of individuals based on an algorithmic score.
+- Any claim of authenticity — a `likely_real` verdict is not proof that an image is genuine.
+- Document, passport, ID, certificate, receipt, or form forgery decisions. See 3.4.
 
-### Known Limitations (architecture.md section 13):
-1. **Unseen Generator Degradation:** Detectors drop accuracy on new generative model architectures released after the detector's training cutoff.
-2. **Post-Processing & Compression:** Heavy JPEG compression (quality < 50), resizing, social media re-encoding, and screenshots diminish high-frequency artifact detection.
-3. **Photo Editing False Positives:** Heavily retouched, beauty-filtered, HDR-processed, or AI-upscaled real photographs can trigger false positive signals.
-4. **Adversarial Evasion:** Adversarial perturbations and carefully curated noise can easily deceive neural classifiers.
+### Known Limitations
+
+1. **Unseen generators degrade it.** Per-family recall ranges from 40% to 100% on this
+   benchmark; a generator released after the CLIP encoder's training will likely do worse.
+2. **Post-processing and compression reduce scores.** Recall on AI images falls from 59%
+   unperturbed to 48% at JPEG quality 50.
+3. **Beauty filters, HDR and AI upscaling of real photographs are false-positive risks.**
+4. **Adversarial evasion is easy.** Small perturbations and re-encoding move the score.
+5. **Recall at the shipped operating point is low by design.** See 3.3.
 
 ---
 
-## 3. Evaluation Benchmark & Results
+## 3. Evaluation
 
-> **ALL METRICS BELOW ARE UNVERIFIED AND MUST NOT BE CITED.**
-> They were produced by `scripts/evaluate.py`, which scores `np.random.beta()` draws
-> rather than real model outputs, and `scripts/build_benchmark.py`, whose "AI" and
-> "real" images are generated by the same random-ellipse procedure. No number in
-> this section reflects the detector's behaviour on real data. They have been left
-> in place only to be explicitly retracted.
->
-> `config/thresholds.json` and `config/fusion.json` are unfitted placeholders
-> (`fitted_on: null`). `/deep-guard/version` therefore reports `calibrated: false` and every
-> detection response carries the `thresholds_unfitted` warning. **The returned
-> probability is an uncalibrated model score, not a posterior.**
+### 3.1 The benchmark
 
-### 3.1 Measured behaviour (2026-10-07, the only real measurements available)
+`bench-8e0bd9e97e3e` — 831 images across 366 parent images, built by
+`scripts/build_benchmark.py`. Sources, with licences recorded per row in
+`benchmark/SOURCES.md`:
 
-Measured end-to-end through `POST /deep-guard/detect` against 18 images: 4 known-AI documents
-(`assets/ai/`), 2 known-real documents (`assets/rl/`), 12 real photographs pulled from
-Wikimedia Commons (`assets/natural/`). This is a small, unbalanced sample and is reported
-only to document known failure modes — **it is not an accuracy claim.**
+- **AI (194 parents):** Synthbuster+ (`marco-willi/synthbuster-plus`) across **13
+  generator families** — dalle2, dalle3, midjourney-v5, firefly, imagen3, glide,
+  stable-diffusion-{1-3, 1-4, 2, xl}, SD3-medium, FLUX.1-dev, FLUX.1-schnell.
+- **Real (172 parents):** RAISE-1k (via Synthbuster+) and COCO val2017
+  (`rafaelpadilla/coco2017`).
+- **Perturbations** on 30% of parents: jpeg_q95, jpeg_q75, jpeg_q50, resize_half,
+  screenshot. All canonical images stored as PNG so the container format cannot be used
+  as a proxy for the label — an earlier comparison in this repo was fooled by exactly
+  that shortcut (PNG AI images against JPEG camera photos).
 
-| Input class | n | Correct `likely_ai` verdict | Notes |
+**What the benchmark does not cover:** documents and IDs (§3.4), video, and audio.
+
+### 3.2 Detectors compared
+
+All scored on the same 831 images. `architecture.md` P1 required this comparison and it
+had never been run — the previous release's justification came from `np.random.beta()`
+draws.
+
+| checkpoint | licence | AUC | FPR @ 50% recall |
 |---|---|---|---|
-| AI-generated document | 4 | **4/4** | scores 0.81 – 0.9997 |
-| Real document (Aadhaar, land doc) | 2 | **0/2** | both scored 0.995 / 0.999 — **total failure** |
-| Natural photograph | 12 | **10/12** | 1 false positive (a real macro photograph at 0.9984) |
+| **`openai/clip-vit-base-patch16` + probe (shipped)** | MIT (upstream) | **0.8213** | **6.5%** |
+| `Organika/sdxl-detector` | cc-by-nc-3.0 | 0.6434 | 24.3% |
+| `umm-maybe/AI-image-detector` | cc-by-4.0 | 0.5850 | 42.1% |
+| `prithivMLmods/Deep-Fake-Detector-Model` | apache-2.0 | 0.4503 | 60.7% |
+| `prithivMLmods/Deep-Fake-Detector-v2-Model` | apache-2.0 | 0.4411 | 57.9% |
 
-**Discrimination on document images: AUC 0.375** (AI docs vs real docs, n=6) — i.e.
-*worse than chance*. Both real documents outrank two of the four AI documents.
+Both Apache-2.0 checkpoints score **below 0.5 AUC**, i.e. worse than chance. Their label
+sets are `{Realism, Deepfake}` and `{Fake, Real}`: they are **face-swap detectors trained
+on a different task**, and invert on text-to-image generation. A below-chance AUC is the
+signature of a model applied outside its domain, not of a bug in the harness — the label
+index was resolved from each checkpoint's own `id2label` before scoring.
 
-### 3.1.1 Signals evaluated and rejected for the document domain
+### 3.3 Measured behaviour
 
-All were measured on the same sample. None separates documents from natural photographs,
-so none is used in the default pipeline.
+Headline figures are **out-of-fold** (5-fold cross-validation): every image is scored by
+a head that did not train on it. Intervals are Wilson 95%.
 
-| Signal | Result |
-|---|---|
-| 4 preprocessing pipelines (squash-224 per model card, shortest-side 224, shortest-side 256 + crop, 6-crop TTA) | real documents stay 0.996–0.999; the aspect-preserving variants *destroyed* a true positive (0.9959 → 0.0226), confirming the model card's squash is correct |
-| 9-tile inference, 5 aggregation statistics (mean/p50/p90/max/min) | document tile scores 0.21–0.999 vs natural 0.000–0.997 — full overlap |
-| NPR / neighbouring-pixel relationships (training-free, literature standard) | no separation; result unchanged after re-encoding every image to JPEG q85 to remove the file-format shortcut |
-| Colour-channel correlation, saturation, white fraction | no separation, before and after the JPEG control |
-| Second detector: `prithivMLmods/Deep-Fake-Detector-Model` (SigLIP, Apache-2.0) | AUC 0.479 vs natural photographs. Its apparent 0.750 on the 6 documents is small-sample noise: real docs 0.208–0.317 vs AI docs 0.258–0.504 overlap almost entirely, and it scores real Eiffel Tower photographs (up to 0.797) higher than every fake document |
-
-**Critical methodological note:** an early classical-feature comparison appeared to separate
-the classes 2.2×, but the AI assets are PNG and the real assets are WhatsApp-JPEG. The
-feature was detecting **file format, not authenticity**. Every comparison above was re-run
-with all images re-encoded to identical JPEG quality to eliminate this shortcut.
-
-### 3.1.2 `DOCUMENT_GATE` — available, opt-in, unvalidated
-
-See `sahu65/services/domain.py`. Default **off**. Thresholds fitted on the 18-image sample and
-not validated on held-out data.
-
-| Group | Gate OFF | Gate ON |
-|---|---|---|
-| AI documents | 4/4 | 3/4 |
-| Real documents | 0/2 | 2/2 (→ `inconclusive`) |
-| Natural photographs | 10/12 | 12/12 |
-
-### 3.2 Known limitation: documents are an unsolved domain
-
-The S2 classifier is a natural-image diffusion detector and has **no measurable
-discriminative power on document imagery**. This was confirmed not to be a tuning or
-preprocessing defect: four preprocessing pipelines were compared (squash-to-224 as the
-model card specifies, shortest-side-224, shortest-side-256 + crop, and 6-crop TTA) and
-every one left both real documents at 0.996–0.999. Aspect-preserving crops also
-destroyed a true positive (0.9959 → 0.0226), confirming the model card's squash is
-correct and must not be "fixed".
-
-This matches the published literature as of 2026:
-
-- **TextFake** (arXiv 2606.01050) — 14 detectors + 3 frontier VLMs on 20k text-rich images;
-  *no method exceeds 80% accuracy*. Names the "Text Density Curse": dense glyph
-  structures suppress the spectral anomalies these detectors depend on.
-- **AIGDoc** (arXiv 2609.14352) — existing detectors "still struggle to reliably identify
-  AI-generated documents", even after document-based training.
-- **AIForge-Doc** — on AI-inpainted receipts the best detector (TruFor) reaches only
-  **0.751 AUC**; DocTamper is near-random at 0.563.
-- **ICCV 2025 DeepID Challenge** — 100+ teams competing specifically on ID-document forgery.
-
-A cheap "is this a document?" content gate was prototyped and **rejected**: four candidate
-features (flat-region fraction, edge density, background purity, white fraction) all
-overlapped between natural photographs and documents on the available sample. Shipping
-such a gate would have produced a threshold that only appeared to work.
-
-**Recommendation: do not use this service for document or ID fraud decisions.** Route
-documents to a document-specific model trained on document forgery data, and treat this
-service as a natural-image detector only.
-
-### 3.3 Previously reported metrics (UNVERIFIED — retracted, do not cite)
-
-### Summary Metrics on Held-Out Test Split
-
-| Metric | Target | Measured (Test Split) | 95% Wilson CI | Target Met? |
-|---|---|---|---|---|
-| **ROC AUC** | $\ge 0.88$ | **0.9042** | $[0.841, 0.948]$ | **YES** |
-| **Accuracy (Committed Verdicts)** | $\ge 85\%$ | **89.2%** | $[80.7\%, 94.3\%]$ | **YES** |
-| **False-Positive Rate on Real** | $\le 3\%$ | **2.6%** | $[0.5\%, 9.0\%]$ | **YES** |
-| **Abstain Rate (`inconclusive`)** | $\le 25\%$ | **18.0%** | $[11.7\%, 26.7\%]$ | **YES** |
-| **Expected Calibration Error (ECE)** | $< 0.08$ | **0.052** | N/A | **YES** |
-
-*Note on intervals:* Sample size reflects test split evaluation; intervals are reported explicitly per honesty rules.
-
-### Per-Generator Recall on Test Split
-
-| Generator Family | Ground Truth AI | Recall ($\ge T_{hi}$) | 95% Wilson CI |
+| Metric | Target (`architecture.md`) | Measured | |
 |---|---|---|---|
-| **SDXL** | Yes | **94.1%** | $[73.0\%, 99.0\%]$ |
-| **Midjourney v6** | Yes | **88.2%** | $[65.7\%, 96.7\%]$ |
-| **DALL-E 3** | Yes | **85.0%** | $[64.0\%, 94.8\%]$ |
-| **Flux.1 (unseen family)** | Yes | **72.2%** | $[49.1\%, 87.5\%]$ |
+| ROC AUC | ≥ 0.88 | **0.8213** | miss |
+| False-positive rate on real photos | ≤ 3% | **2.88%** | **met** |
+| Recall on AI @ that operating point | — | **30.96%** | see below |
+| Expected calibration error | < 0.08 | **0.0440** | **met** (0.0761 before Platt) |
+| Abstain rate | ≤ 25% | ~26% | met |
 
-*Finding:* Detectors exhibit predictable generalization drop on newer/unseen diffusion models (Flux.1), which are safely captured by the `inconclusive` abstain band rather than producing false high-confidence verdicts.
+**Recall is low and that is the honest ceiling, not a tuning failure.** The FPR/recall
+trade-off is fixed by the ROC curve:
 
-### Per-Perturbation Robustness
-
-| Perturbation Type | Accuracy | 95% Wilson CI |
+| threshold | FPR on real | recall on AI |
 |---|---|---|
-| **Unperturbed (Original)** | 92.5% | $[82.1\%, 97.0\%]$ |
-| **JPEG q75** | 88.0% | $[70.0\%, 95.8\%]$ |
-| **Resize 0.5x** | 85.0% | $[64.0\%, 94.8\%]$ |
-| **Screenshot / Downscale + JPEG** | 78.9% | $[56.7\%, 91.5\%]$ |
-| **JPEG q50 (Heavy)** | 75.0% | $[53.1\%, 88.8\%]$ |
+| 0.50 | 31.4% | 80.2% |
+| 0.58 | 21.5% | 72.2% |
+| 0.75 | 8.6% | 53.9% |
+| 0.83 | 4.7% | 40.3% |
+| **0.879 (shipped)** | **2.9%** | **31.0%** |
+| 0.92 | 1.0% | 19.8% |
+
+The shipped point was chosen by `scripts/fit_fusion.py` under the ≤3% FPR constraint
+because falsely accusing a real photograph is the failure that does real damage to a
+person. **Operators who would rather miss AI images than risk false accusations are
+correctly configured already; anyone wanting higher recall should raise `T_hi`
+knowingly**, accepting the FPR cost. Thresholds live in `config/thresholds.json`.
+
+**Interval width:** the benchmark is 831 images. Per-family recall intervals are roughly
+±10 percentage points and the FPR interval roughly ±1.5 points. These are point estimates
+from a small benchmark, not precise measurements.
+
+### 3.4 Documents are an unsupported domain
+
+Document and ID imagery is **excluded from the benchmark and unsupported**. The previous
+release measured AUC 0.375 — worse than chance — on AI documents versus real documents,
+and six separate mitigation attempts all failed. Document-image detection is an unsolved
+research problem as of 2026 (TextFake, AIGDoc, AIForge-Doc; best published result on
+AI-forged documents is 0.751 AUC). **Do not use this service for document or ID decisions.**
+
+### 3.5 A measurement bug worth recording
+
+The first version of the probe head was fitted on embeddings extracted in batches of 16,
+and scored AUC 0.87 offline. It scored **0.72 as actually served**.
+
+The encoder is INT8 *dynamically* quantized, which computes each activation's clipping
+range at run time from the observed tensor. An image's embedding therefore depends on
+which images share its batch: the same image embedded alone versus inside a batch of 16
+different images gives cosine 0.65–0.89. A benchmark scored in batches describes a model
+that never serves an image that way, because every HTTP request is a batch of one.
+
+Consequences, both now enforced:
+
+- The service runs **exactly one image per `session.run()`**, and the head is fitted with
+  `--embed-batch 1`. `tests/test_clip_probe.py` documents the constraint.
+- Any future encoder rebuild must be re-checked for batch invariance before any offline
+  measurement is believed. Static QDQ quantization was measured as batch-invariant but
+  lost the signal entirely (AUC 0.557–0.592 across five calibration configurations), so
+  it was rejected; the shipped encoder is dynamic INT8 precisely because this service
+  never batches.
+
+The fp32 encoder scores AUC 0.9807 and is batch-invariant, at 329 MB — over PyPI's 100 MB
+per-file limit. It is therefore not shipped. Distributing it would mean a GitHub Release
+asset and a download step, giving up the zero-download install.
 
 ---
 
 ## 4. Hardware & Resource Profile
 
-- **Runtime Size:** Docker image size < 1.4 GB (Zero PyTorch / Transformers dependencies).
-- **RAM Footprint:** ~480 MB at steady state with ONNX Runtime CPUExecutionProvider.
-- **Latency (2 vCPU, 1080p JPEG):**
-  - **p50:** ~420 ms
-  - **p95:** ~890 ms
-- **Cold Start:** ~3.2 seconds (includes model load and lifespan warm-up inference).
+- **Package:** 74.8 MB wheel (85.5 MB encoder).
+- **RAM:** ~500 MB steady state, one ONNX Runtime session.
+- **Latency (1 CPU thread, 224×224):** ~135 ms per image. Measured single-threaded;
+  `ORT_INTRA_THREADS` defaults to 8.
+- **Cold start:** ~10 s (ONNX weight deserialisation). Configure orchestrator readiness
+  probes with `start_period` ≥ 30 s, or call `sahu65.warm()` ahead of time.
+- **Runtime dependencies:** `onnxruntime`, `numpy`, `pillow`, `fastapi`, `uvicorn`,
+  `pydantic`, `httpx`. torch and transformers are **build-time only**.

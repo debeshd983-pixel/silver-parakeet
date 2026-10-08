@@ -1,8 +1,8 @@
 {
-  "w1": 1.0,
-  "w2": 0.0,
-  "b": 0.0,
-  "benchmark_id": null,
-  "fitted_on": null,
-  "note": "w2=0: the CLIP probe head is untrained (scripts/train_probe.py fits on np.random.randn), so it contributes noise. Re-enable only after fitting a real head on real embeddings."
+  "w1": 0.0,
+  "w2": 1.641967,
+  "b": 0.087735,
+  "live_signal": "clip",
+  "fitted_on": "2026-10-08",
+  "note": "Platt scaling of the single live signal, fitted on out-of-fold benchmark scores. The other weight is 0 because that detector is not shipped: Organika/sdxl-detector measured AUC 0.6434 against 0.8213 for the CLIP probe, and fusing the two was worse than the probe alone at every mixing weight tried. w1/w2 are named by their original signal; only the clip weight is non-zero."
 }

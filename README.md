@@ -1,65 +1,65 @@
 # AI-Generated Image (Deepfake) Detection Backend
 
 A lightweight, CPU-only AI-generated image detection service and Python package built with
-**FastAPI**, **ONNX Runtime**, and calibrated ensemble fusion.
+**FastAPI**, **ONNX Runtime**, and a linear probe on a frozen CLIP encoder.
 
-> **`WORKLOG.md`** records what was changed in this repository and why, including defects
-> that were **not** fixed. `DECISIONS.md` has the chronological decision log; `MODEL_CARD.md`
-> has measurements and limitations.
+> **`WORKLOG.md`** records what changed and why, including defects that were **not** fixed.
+> `DECISIONS.md` has the chronological decision log. `MODEL_CARD.md` has measurements,
+> limitations and the full detector comparison.
 
-> **CRITICAL NOTICE:** The output is **NOT proof.** See [MODEL_CARD.md](MODEL_CARD.md) for full limitations and ethical use guidelines.
-
-> ## READ THIS BEFORE USING IT ON DOCUMENTS OR IDs
+> ## READ THIS BEFORE RELYING ON A VERDICT
 >
-> This service is a **natural-image** diffusion detector. It has **no measurable
-> discriminative power on document images**: measured AUC **0.375** (worse than chance)
-> on real vs. fake documents. Real photographs of documents — ID cards, certificates,
-> forms — are flagged AI with ~99% confidence. This was verified not to be a tuning or
-> preprocessing defect (four preprocessing pipelines were compared; all left real documents
-> at 0.996–0.999).
->
-> Document-image detection is an unresolved research problem as of 2026 (TextFake: no
-> evaluated method exceeds 80% accuracy; best published result on AI-forged documents is
-> 0.751 AUC). **Do not use this service for document, passport, or ID fraud decisions.**
->
-> The returned probability is also **uncalibrated**: `T_lo`/`T_hi` are unfitted
-> placeholders, so every response carries a `thresholds_unfitted` warning and `/deep-guard/version`
-> reports `"calibrated": false`.
+> 1. **This is a signal, not proof.** A `likely_real` verdict does not establish that an
+>    image is authentic.
+> 2. **Do not use it on documents or IDs.** Document forgery detection is excluded from the
+>    benchmark and unsupported — the previous model measured AUC 0.375, worse than chance.
+>    See [MODEL_CARD.md](MODEL_CARD.md) §3.4.
+> 3. **Recall is 31% at the shipped threshold.** That is a deliberate trade to keep false
+>    accusations below 3%. Roughly one AI image in three is caught. Raising `T_hi` catches
+>    more and accuses more real photographs — the trade-off table is in
+>    [MODEL_CARD.md](MODEL_CARD.md) §3.3.
 
 ---
 
 ## Key Features
 
-- **Lightweight CPU Runtime:** ONNX Runtime with INT8 dynamic quantization. **91.8 MB** of
-  weights, **no PyTorch or Transformers** at runtime. Weights ship inside the wheel, so
+- **Lightweight CPU Runtime:** ONNX Runtime, INT8 dynamic quantization. **85.5 MB** of
+  weights, **no PyTorch or Transformers at runtime**. Weights ship inside the wheel, so
   there is no download step and no cold-start stall from fetching a model.
-- **Cold start: ~10 s.** Measured from `sahu65 serve`: TCP socket listening at ~1.5 s, first
-  HTTP response at ~10 s, first successful detection at ~12 s. ONNX Runtime's session
-  initialisation holds the GIL, so although the socket binds early the event loop cannot
-  answer requests until the weights are resident. **Configure your orchestrator readiness
-  probe with `start_period` >= 30 s** (the Dockerfile does). Calling `sahu65.warm()`
-  ahead of time moves this cost off your first request.
-- **Measured latency:** ~200 ms per image warm (1080p JPEG, 4 CPU threads).
-- **Fails loudly:** a missing or unreadable checkpoint is a hard `/deep-guard/readyz` failure
-  (`503 model_load_failed`), never a silent stub probability. Previously a missing model
-  returned a constant `0.50` that looked like a working model.
-- **Label mapping is data-driven:** the AI class index is resolved from the checkpoint's own
-  `id2label` at load time, never hardcoded. Pinned by `tests/test_classifier.py`.
-- **Honest Abstain Band:** explicit `inconclusive` zone ($T_{lo} \le p \le T_{hi}$).
+- **One model, ~135 ms per image.** A single 512-d linear probe on a frozen CLIP ViT-B/16
+  encoder. The previous two-model ensemble was removed: measured head to head, the probe
+  beat the second model on its own (AUC 0.82 vs 0.64) and fusing them was *worse* than the
+  probe alone. [MODEL_CARD.md](MODEL_CARD.md) §1.
+- **Permissive licence.** The bundled encoder is CLIP ViT-B/16 (MIT per its upstream model
+  card). The previous checkpoint was `cc-by-nc-3.0` — non-commercial, which was a real
+  problem for a package published on PyPI.
+- **Cold start: ~10 s.** Socket listening at ~1.5 s, first detection at ~12 s. ONNX
+  Runtime's session init holds the GIL. **Set your orchestrator readiness probe
+  `start_period` ≥ 30 s** (the Dockerfile does). `sahu65.warm()` moves the cost off your
+  first request.
+- **Fails loudly:** a missing or unreadable checkpoint is a hard `/deep-guard/readyz`
+  failure (`503 model_load_failed`), never a silent constant probability.
+- **Honest abstain band:** explicit `inconclusive` zone (`T_lo` ≤ p ≤ `T_hi`).
+- **Plain-language explanations:** opt-in narration of the verdict by any LLM provider.
+  See [Explanations](#explanations) below.
 - **Production-Ready:** streamed uploads with size caps, magic-byte sniffing, decompression
   bomb guards, structured JSON logging (zero image persistence), rate limiting, and
   **Bear Token API-key auth** (`sahu65 --key <name>`; `Authorization: Bearer` or
   `X-API-Key`).
 
-### Measured behaviour (2026-10-07)
+### Measured behaviour (benchmark `bench-8e0bd9e97e3e`, 831 images, out-of-fold)
 
-Small, unbalanced sample, reported to document failure modes — **not an accuracy claim**.
+| Metric | Measured |
+|---|---|
+| ROC AUC | **0.8213** |
+| False-positive rate on real photos | **2.88%** (target ≤ 3%) |
+| Recall on AI at that threshold | **30.96%** |
+| Expected calibration error | **0.0440** (0.0761 before Platt scaling) |
 
-| Input class | n | Correct verdict |
-|---|---|---|
-| AI-generated document | 4 | 4/4 |
-| Real document | 2 | **0/2** |
-| Natural photograph | 12 | 10/12 |
+Per-generator recall ranges from 40% to 100%. Real photographs come from two pipelines
+(RAISE-1k, COCO val2017); AI images span 13 generator families. Per-family intervals are
+roughly ±10 points at this sample size. Full breakdown and the FPR/recall trade-off:
+[MODEL_CARD.md](MODEL_CARD.md) §3.
 
 ---
 
@@ -89,20 +89,21 @@ if "out_of_domain_flat_text_heavy" in result.warnings:
 ```python
 from sahu65 import Client
 
-client = Client(api_key="bear_...")            # sahu65 --key <name>; or set SAHU65_API_KEY / SAHU65_BASE_URL
-client.wait_until_ready(timeout_s=120)       # useful right after a cold start
+client = Client(api_key="bear_...")            # sahu65 --key <name>; or set SAHU65_API_KEY
+client.wait_until_ready(timeout_s=120)         # useful right after a cold start
 result = client.detect("photo.jpg")
 ```
 
 ### CLI
 
 ```bash
-sahu65 detect photo.jpg        # local inference
-sahu65 detect photo.jpg --json # JSON output
-sahu65 serve --port 8000       # HTTP API
-sahu65 info                    # bundled checkpoint + threshold state
-sahu65 --key myapp             # mint a Bear Token (API key), printed once
-sahu65 --list-keys             # list minted token names (never the tokens)
+sahu65 detect photo.jpg                    # local inference
+sahu65 detect photo.jpg --json             # JSON output
+sahu65 detect photo.jpg --explain          # plain-language explanation (needs a provider key)
+sahu65 serve --port 8000                   # HTTP API
+sahu65 info                                # bundled checkpoint, thresholds, provider status
+sahu65 --key myapp                         # mint a Bear Token (API key), printed once
+sahu65 --list-keys                         # list minted token names (never the tokens)
 ```
 
 ### Self-host the API
@@ -111,45 +112,81 @@ sahu65 --list-keys             # list minted token names (never the tokens)
 uvicorn sahu65.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
-**Gate traffic on `/deep-guard/readyz`, not `/deep-guard/healthz`** — `/deep-guard/readyz`
-is 503 until the real weights are resident, and it reports `model_load_failed` if the
-checkpoint is missing.
+**Gate traffic on `/deep-guard/readyz`, not `/deep-guard/healthz`** — `/readyz` is 503
+until the weights are resident and reports `model_load_failed` if the checkpoint is missing.
 
 ### Bear Tokens (API keys)
 
-`POST /deep-guard/detect` is open by default. The moment **one** key exists — minted
-with the CLI or set via `API_KEYS` — every detect call must present it, otherwise the
-response is `401 unauthorized` with `{"error": {"code": "unauthorized"}}`:
+`POST /deep-guard/detect` is open by default. The moment **one** key exists — minted with
+the CLI or set via `API_KEYS` — every detect call must present it, otherwise the response
+is `401 unauthorized` with `{"error": {"code": "unauthorized"}}`:
 
 ```bash
 sahu65 --key myapp                          # prints the token ONCE; stores its SHA-256 only
 curl -X POST http://localhost:8000/deep-guard/detect \
   -H "Authorization: Bearer bear_myapp_..." \
   -F "file=@sample.jpg"
-# equivalent: -H "X-API-Key: bear_myapp_..."
 ```
 
 - Tokens are stored in `~/.sahu65/keys.json` (override: `SAHU65_KEYFILE`) as **SHA-256
-  digests only** — a leaked key file cannot be replayed. The plaintext token is shown
-  exactly once, at mint time; `sahu65 --list-keys` shows names and dates only.
-- Re-running `sahu65 --key myapp` **rotates** the token: the previous one stops working.
-- The store is re-read whenever the file changes, so a token minted while the server is
-  running takes effect immediately — no restart needed.
-- `API_KEYS=k1,k2` (comma-separated plaintext, the original mechanism) still works
-  alongside minted tokens.
+  digests only** — a leaked key file cannot be replayed.
+- Re-running `sahu65 --key myapp` **rotates** the token; the previous one stops working.
+- The store is re-read whenever the file changes, so a token minted while the server runs
+  takes effect immediately.
+- `API_KEYS=k1,k2` still works alongside minted tokens.
 - SDK: `Client(api_key="bear_...")` or `export SAHU65_API_KEY=bear_...`.
-- Auth is checked **before** readiness on `/detect`, so unauthenticated callers learn
-  nothing about model state. `/healthz`, `/readyz` and `/version` stay open for probes.
+- Auth is checked **before** readiness, so unauthenticated callers learn nothing about
+  model state. `/healthz`, `/readyz` and `/version` stay open for probes.
 
-### 2. Run with Docker
+### Docker
 
 ```bash
-# Build multi-stage image
 docker build -t ai-image-detector:latest .
-
-# Run container (memory capped at 1GB, 2 CPUs)
 docker run -p 8000:8000 --cpus=2 --memory=1g ai-image-detector:latest
 ```
+
+---
+
+## Explanations
+
+Opt-in plain-language narration of a verdict, generated by any LLM provider. Supported out
+of the box: **Google AI Studio (Gemini)** and **Groq**.
+
+```bash
+export GEMINI_API_KEY=...        # or GROQ_API_KEY=...
+sahu65 detect photo.jpg --explain
+```
+
+```python
+result = sahu65.detect("photo.jpg", explain_result=True)
+print(result.explanation)
+```
+
+```bash
+curl -X POST http://localhost:8000/deep-guard/detect?explain=true -F "file=@sample.jpg"
+```
+
+Three properties are enforced in code, not left to the prompt:
+
+1. **The model narrates, it never decides.** `explain()` receives the finished verdict and
+   the numbers behind it, and returns prose. No code path lets generated text alter
+   `verdict` or `ai_probability`. If the verdict is `inconclusive`, an explanation claiming
+   certainty is replaced with a fixed neutral phrasing.
+2. **No image bytes leave the process.** Prompts are built from numbers and metadata only,
+   so the promise that images are never written to disk or logged survives, and no user
+   photo is handed to a third party.
+3. **Fully optional and additive.** With no provider key the field is `null` and the
+   detection is byte-for-byte unchanged. Local SDK use stays entirely offline. Both
+   providers are called through the stdlib `urllib`, so neither adds a runtime dependency.
+
+| Variable | Purpose |
+|---|---|
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Google AI Studio |
+| `GROQ_API_KEY` | Groq |
+| `SAHU65_EXPLAIN_MODEL_GEMINI` / `SAHU65_EXPLAIN_MODEL_GROQ` | override the model name |
+
+`/deep-guard/version` and `sahu65 info` report which provider is configured (name only,
+never the key).
 
 ---
 
@@ -166,12 +203,8 @@ All routes are mounted under the **`/deep-guard`** prefix.
 
 ### `POST /deep-guard/detect`
 
-Accepts multipart form-data with an image file (`JPEG`, `PNG`, `WebP`).
-
-**Example Request:**
-
-When a Bear Token is configured, add `-H "Authorization: Bearer <token>"` (or
-`-H "X-API-Key: <token>"`); without any key configured, no header is needed.
+Accepts multipart form-data with an image file (`JPEG`, `PNG`, `WebP`). Query parameters:
+`explain` (bool), `explain_provider` (`gemini` | `groq`).
 
 ```bash
 curl -X POST http://localhost:8000/deep-guard/detect \
@@ -179,83 +212,101 @@ curl -X POST http://localhost:8000/deep-guard/detect \
 ```
 
 **Example Response (200 OK):**
+
 ```json
 {
   "request_id": "9f1c7d2e4a8b",
   "verdict": "likely_ai",
-  "ai_probability": 0.9959,
-  "confidence": "high",
+  "ai_probability": 0.9346,
+  "confidence": "medium",
+  "calibrated": true,
   "signals": {
     "c2pa": { "present": false, "ai_declared": null },
-    "classifier": { "model": "Organika/sdxl-detector@b37fede", "probability": 0.9959 },
-    "clip_probe": { "model": "unloaded", "probability": 0.5 }
+    "detector": {
+      "model": "openai/clip-vit-base-patch16@57c2164",
+      "probability": 0.9127
+    }
   },
-  "warnings": ["jpeg_recompressed_likely", "thresholds_unfitted"],
-  "model_version": "2026.10.0",
-  "benchmark_id": null,
-  "latency_ms": 305.2
+  "warnings": ["jpeg_recompressed_likely"],
+  "explanation": null,
+  "explanation_provider": null,
+  "model_version": "2026.11.0",
+  "benchmark_id": "bench-8e0bd9e97e3e",
+  "latency_ms": 119.7
 }
 ```
 
-Note `clip_probe` reports `0.5`: S3 is disabled (`w2 = 0.0`) because its head was fitted on
-random noise. It does not affect the result. `thresholds_unfitted` means the probability is
-an uncalibrated model score.
+> **Breaking change in 2026.11.0:** `signals.classifier` and `signals.clip_probe` were
+> replaced by a single `signals.detector`. Only one model runs now, and the old field names
+> described a second one that is no longer shipped.
 
-### Other Endpoints
+Errors use a uniform shape `{ "error": { "code": "...", "message": "..." } }`:
 
-| Endpoint | Method | Description |
+| Status | Code | Cause |
 |---|---|---|
-| `/deep-guard/healthz` | `GET` | Liveness check. Note: it does **not** answer until weights are loaded (~10 s), because ONNX Runtime's session init holds the GIL. Useful as a "process is up" signal, not a "model is ready" one. |
-| `/deep-guard/readyz` | `GET` | **Gate traffic on this.** 200 once models loaded & warmed; 503 `model_not_ready` while loading; 503 `model_load_failed` if the checkpoint is missing |
-| `/deep-guard/version` | `GET` | Model IDs, revision, thresholds, fusion weights, and a `calibrated` flag |
+| 400 | `invalid_image` | Cannot decode |
+| 401 | `unauthorized` | Bear Token required but absent/invalid |
+| 413 | `file_too_large` | Over `MAX_UPLOAD_MB` |
+| 415 | `unsupported_type` | Not JPEG/PNG/WebP |
+| 422 | `image_too_large_pixels` | Over `MAX_PIXELS` (decompression bomb guard) |
+| 429 | `rate_limited` | Rate limit hit |
+| 503 | `model_not_ready` / `model_load_failed` | Loading, or weights missing |
 
 ---
 
 ## Configuration
 
-All configuration is handled via environment variables (see `sahu65/config.py`):
+All configuration is via environment variables (see `sahu65/config.py`):
 
 | Variable | Default | Description |
 |---|---|---|
-| `MAX_UPLOAD_MB` | `10` | Hard cap on upload file size |
-| `MAX_PIXELS` | `50000000` | Decompression bomb guard pixel cap |
-| `MAX_CONCURRENT_INFERENCES`| `8` | Semaphore limit for concurrent CPU inference |
-| `ORT_INTRA_THREADS` | `8` | Thread count for ONNX Runtime session |
-| `ENABLE_C2PA` | `true` | Extract Content Credentials (falls back gracefully if unavailable) |
-| `ENABLE_TTA` | `false` | Enable 5-crop test-time augmentation |
+| `MAX_UPLOAD_MB` | `10` | Hard cap on upload size |
+| `MAX_PIXELS` | `50000000` | Decompression bomb guard |
+| `MAX_CONCURRENT_INFERENCES` | `8` | Semaphore limit for concurrent inference |
+| `ORT_INTRA_THREADS` | `8` | Threads per ONNX session |
+| `ENABLE_C2PA` | `true` | Extract Content Credentials (degrades gracefully) |
 | `RATE_LIMIT` | `30/minute` | Rate limiter window per IP/key |
-| `REQUIRE_REAL_MODEL` | `true` | Refuse to become ready if the S2 checkpoint is missing |
-| `DOCUMENT_GATE` | `false` | **UNVALIDATED, opt-in.** Suppress confident verdicts to `inconclusive` on flat/text-heavy out-of-distribution input. See below. |
-| `API_KEYS` | `""` | Comma-separated plaintext keys accepted alongside minted Bear Tokens; any non-empty value enables auth |
-| `SAHU65_KEYFILE` | `~/.sahu65/keys.json` | Bear Token store — SHA-256 digests only, never plaintext tokens |
+| `REQUIRE_REAL_MODEL` | `true` | Refuse to become ready if weights are missing |
+| `DOCUMENT_GATE` | `false` | **UNVALIDATED, opt-in.** Suppress confident verdicts to `inconclusive` on flat/text-heavy out-of-distribution input |
+| `API_KEYS` | `""` | Comma-separated plaintext keys alongside minted Bear Tokens |
+| `SAHU65_KEYFILE` | `~/.sahu65/keys.json` | Bear Token store — SHA-256 digests only |
 | `ALLOWED_ORIGINS` | `""` | CORS allowed origins |
+| `ENABLE_DOCS` | `false` | Serve `/docs` |
+| `GEMINI_API_KEY` / `GROQ_API_KEY` | unset | Explanations (see above) |
 
-### `DOCUMENT_GATE` (opt-in, unvalidated)
-
-The classifier has negative discriminative power on document images (AUC 0.375). When
-`DOCUMENT_GATE=true`, any image the classifier scores ≥0.99 but which scores inconsistently
-across 9 aspect-preserving tiles is downgraded to `inconclusive` with
-`out_of_domain_flat_text_heavy` and `"out_of_domain": true`.
-
-Measured on this repo's 18-image sample:
-
-| Group | Gate OFF | Gate ON |
-|---|---|---|
-| AI documents | 4/4 | **3/4** (`uyntb.png` suppressed) |
-| Real documents | **0/2** | **2/2** (both → `inconclusive`) |
-| Natural photographs | 10/12 | **12/12** |
-
-**These thresholds were fitted by inspecting those same 18 images.** They are not validated
-on held-out data and will not necessarily hold. The gate trades recall on AI documents for
-the elimination of confident false accusations on real ones.
+> `ENABLE_TTA` is accepted for compatibility but ignored: the probe is served one image per
+> inference because the encoder is dynamically quantized and batch-dependent. Batching it
+> would silently change scores. See MODEL_CARD.md §3.5.
 
 ---
 
-## Licensing
+## Reproducing the measurements
 
-The S2 classifier `Organika/sdxl-detector` is licensed **cc-by-nc-3.0 — non-commercial use
-only**. (Earlier revisions of this repo recorded it as Apache-2.0; that was incorrect.)
-See [MODEL_CARD.md](MODEL_CARD.md) §1.
+Every number above comes from a real benchmark and is re-derivable:
+
+```bash
+pip install -r requirements.txt -r requirements-build.txt
+
+# 1. Build the benchmark: 831 labelled images, 13 generator families, licences recorded
+python scripts/build_benchmark.py --out benchmark
+
+# 2. Export the CLIP encoder to INT8 ONNX (torch needed here, not at runtime)
+python scripts/export_clip_onnx.py
+
+# 3. Fit the probe head and emit out-of-fold scores
+python scripts/train_clip_probe.py \
+    --encoder models/clip_encoder.dyn.int8.onnx --embed-batch 1 \
+    --emit-split-scores benchmark/scores_oof.csv --force
+
+# 4. Fit thresholds under the FPR constraint
+python scripts/fit_fusion.py --scores benchmark/scores_oof.csv --live-signal clip
+
+# 5. Report on the held-out split with Wilson intervals
+python scripts/evaluate.py --scores benchmark/scores_oof.csv --split test
+```
+
+`scripts/compare_detectors.py` reproduces the checkpoint comparison in MODEL_CARD.md §3.2.
+`scripts/sweep_clip_quantization.py` reproduces the quantization results in §3.5.
 
 ---
 
@@ -263,103 +314,51 @@ See [MODEL_CARD.md](MODEL_CARD.md) §1.
 
 Publishing is automated by GitHub Actions. **You never handle the token locally.**
 
-Every push to `main` runs the whole pipeline and then publishes: ruff → pytest →
-checkpoint guard → build → `verify_dist.py` → `twine check` → **smoke-test the built
-wheel in a clean venv** → upload to PyPI → poll PyPI until the version is live. Pull
-requests run every step **except** the upload.
+Every push to `main` runs the pipeline and publishes: ruff → pytest → checkpoint guard →
+build → `verify_dist.py` → `twine check` → **smoke-test the built wheel in a clean venv** →
+upload → poll PyPI until live. Pull requests run everything except the upload.
 
 ### One-time setup
 
 1. Create a PyPI API token: <https://pypi.org/manage/account/token/>
-   - **First upload:** `sahu65` does not exist on PyPI yet, so a project-scoped token
-     cannot be created — scope it to your **entire account**, then replace it with a
-     `sahu65`-scoped token after the first successful publish.
-   - This is **not** your account password.
 2. In the GitHub repo: **Settings → Secrets and variables → Actions → New repository
-   secret**
-   - Name: `PYPI_API_TOKEN` (exact spelling)
-   - Value: the token (`pypi-...`)
-3. *(Recommended)* Create a GitHub Environment named `pypi`
-   (**Settings → Environments**). The publish job runs in it, so protection rules with
-   required reviewers turn every upload into an approval. If that environment defines
-   its own `PYPI_API_TOKEN`, it **overrides** the repository secret.
+   secret**, name `PYPI_API_TOKEN`, value the token.
+3. *(Recommended)* Create a GitHub Environment named `pypi` so uploads require approval.
 
 ### Releasing a new version
 
 PyPI releases are immutable: a push that does not change the version uploads nothing
-(`skip-existing: true`), so the job stays green without re-publishing anything. To
-actually ship a change, bump the version first — `scripts/bump_version.py` keeps
-`pyproject.toml` and `sahu65/__init__.py` in sync:
+(`skip-existing: true`). To ship a change, bump the version first —
+`scripts/bump_version.py` keeps `pyproject.toml` and `sahu65/__init__.py` in sync:
 
 ```bash
-python scripts/bump_version.py patch --dry-run   # preview: 1.0.0 -> 1.0.1
-python scripts/bump_version.py patch             # or: minor | major | 1.2.3
-git add -A && git commit -m "sahu65 1.0.1"
+python scripts/bump_version.py minor --dry-run
+python scripts/bump_version.py minor
+git add -A && git commit -m "sahu65 1.1.0"
 git push                                         # push to main -> build + publish
 ```
 
-Watch it land: **Actions → CI → publish to PyPI**; the job finishes by confirming
-`sahu65 <version>` is live at <https://pypi.org/project/sahu65/>.
-
-### What the workflow does
-
-`ci.yml` (every push/PR) → ruff, pytest, checkpoint guard, then build +
-`verify_dist.py` + `twine check` + **smoke-test the built wheel in a clean venv**. On a
-push to `main`/`master` a final `publish` job downloads those exact verified artifacts,
-authenticates with `PYPI_API_TOKEN`, uploads with `skip-existing: true`, then polls
-PyPI until the built version is visible. A missing secret fails the job with an
-actionable error before anything is uploaded.
-
-`scripts/verify_dist.py` is the guard that matters most. It fails the run *before* upload
-if the checkpoint is missing from the wheel, if any artifact exceeds PyPI's 100 MiB
-limit, or if required files are absent. It catches the exact failure that happened during
-this build, where a `MANIFEST.in` exclude silently produced a 37 KB wheel containing no
-model.
-
-### Checkpoint size — a real constraint
-
-The INT8 checkpoint is **96,234,407 bytes (91.78 MiB)**. GitHub hard-blocks any single
-file at **100 MiB**, leaving only ~8 MiB of margin, and PyPI rejects uploads over 100 MiB
-after compression is applied (current artifacts are 66.6 MB).
-
-CI checks this explicitly. If a future re-quantization pushes the file past 100 MiB, the
-fix is to stop committing it and instead:
-
-- store it as a **GitHub Release asset** and fetch it in `scripts/fetch_models.py`, or
-- enable **Git LFS** for `*.onnx`.
-
-Do not simply delete it — `require_real_model=true` means the service refuses to become
-ready without weights, so a missing checkpoint is a hard startup failure by design.
+`scripts/verify_dist.py` is the guard that matters most. It fails the run *before* upload if
+the encoder is missing from the wheel, if any artifact exceeds PyPI's 100 MiB limit, or if
+required files are absent. It catches the exact failure that happened during an earlier
+build, where a `MANIFEST.in` exclude silently produced a 37 KB wheel containing no model.
 
 ---
 
 ## Development & Build Pipeline
 
-Build-time tools require `requirements-build.txt`:
-
-```bash
-pip install -r requirements-build.txt
-
-# 1. Re-fetch the fp32 source weights (fp32 ONNX ships in the HF repo)
-python scripts/fetch_models.py
-
-# 2. Quantize to INT8 -> models/classifier.int8.onnx
-python scripts/quantize.py
-```
-
-Steps 3–6 of the original pipeline (`export_onnx.py`, `fit_fusion.py`, `evaluate.py`) are
-**not currently valid**: `build_benchmark.py` generates "AI" and "real" images from the same
-random-ellipse procedure, `train_probe.py` fits the CLIP head on `np.random.randn`, and
-`fit_fusion.py` / `evaluate.py` operate on `np.random.beta()` draws rather than model
-outputs. Numbers produced by them describe random data, not this model. Do not use them to
-set thresholds or report accuracy.
-
-## Running Tests
-
 ```bash
 pytest
-ruff check app tests scripts
+ruff check sahu65 tests scripts
 ```
 
-`tests/test_classifier.py` pins the AI/real label mapping so the historical inverted-index
-bug cannot return silently.
+Runtime dependencies are pinned in `requirements.txt` (no torch). Build-time tools live in
+`requirements-build.txt` (torch, transformers, onnx). Keeping torch out of the runtime is
+what keeps the image and the wheel small.
+
+> `scripts/build_benchmark.py`, `scripts/score_benchmark.py`,
+> `scripts/train_clip_probe.py` and `scripts/fit_fusion.py` were rewritten in 2026.11.0.
+> Earlier versions of `build_benchmark.py` and `fit_fusion.py` generated their "real" and
+> "AI" images and their model predictions from random draws, so every metric they produced
+> described a random number generator. Numbers from those versions were retracted in place
+> in the previous MODEL_CARD and must not be cited.

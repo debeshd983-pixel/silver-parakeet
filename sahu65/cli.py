@@ -17,7 +17,7 @@ _KEY_SUGAR_PREFIX = "--key-"
 def _cmd_detect(args) -> int:
     from .local import detect
 
-    result = detect(args.image)
+    result = detect(args.image, explain_result=args.explain, explain_provider=args.explain_provider)
     if args.json:
         print(json.dumps(result.to_dict(), indent=2))
         return 0
@@ -25,12 +25,21 @@ def _cmd_detect(args) -> int:
     print(f"verdict          : {result.verdict}")
     print(f"ai_probability   : {result.ai_probability}")
     print(f"confidence       : {result.confidence}")
-    print(f"classifier score : {result.classifier_probability}")
+    print(f"detector score   : {result.detector_probability}")
     print(f"c2pa             : present={result.c2pa_present} ai_declared={result.c2pa_ai_declared}")
     print(f"calibrated       : {result.calibrated}")
     print(f"latency_ms       : {result.latency_ms}")
     if result.warnings:
         print(f"warnings         : {', '.join(result.warnings)}")
+    if args.explain:
+        if result.explanation:
+            print()
+            print(f"explanation ({result.explanation_provider}):")
+            print(f"  {result.explanation}")
+        else:
+            print()
+            print("explanation      : unavailable (no provider key set, or the provider failed)")
+            print("                   set GEMINI_API_KEY or GROQ_API_KEY to enable it")
     return 0 if result.verdict != "inconclusive" else 2
 
 
@@ -49,6 +58,7 @@ def _cmd_serve(args) -> int:
 def _cmd_info(args) -> int:
     from .config import get_settings, is_calibrated, load_fusion, load_thresholds
     from .local import model_info
+    from .services.explain import configured as explain_configured
 
     settings = get_settings()
     print(json.dumps(
@@ -58,6 +68,7 @@ def _cmd_info(args) -> int:
             "fusion": load_fusion(settings.config_dir),
             "calibrated": is_calibrated(settings.config_dir),
             "document_gate": settings.document_gate,
+            "explanation": explain_configured(),
         },
         indent=2,
         default=str,
@@ -121,6 +132,17 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("detect", help="detect on a local image using the bundled model")
     d.add_argument("image", help="path to a JPEG, PNG or WebP file")
     d.add_argument("--json", action="store_true", help="emit JSON instead of text")
+    d.add_argument(
+        "--explain",
+        action="store_true",
+        help="attach a plain-language explanation (needs GEMINI_API_KEY or GROQ_API_KEY)",
+    )
+    d.add_argument(
+        "--explain-provider",
+        choices=["gemini", "groq"],
+        default=None,
+        help="force a narration provider instead of auto-detecting from the environment",
+    )
     d.set_defaults(func=_cmd_detect)
 
     s = sub.add_parser("serve", help="run the HTTP API server")

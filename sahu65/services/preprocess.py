@@ -1,4 +1,10 @@
-"""Image preprocessing pipelines for S2 (Classifier) and S3 (CLIP Probe) in pure NumPy/Pillow."""
+"""Image preprocessing for the shipped detector (a linear probe on frozen CLIP).
+
+The probe is fed an aspect-preserving centre crop with CLIP mean/std normalisation. The
+clip class mapping is resolved from the checkpoint's own ``id2label`` when one exists;
+the shipped probe has no labels of its own, so its direction is a property of the fitted
+head (``clip_head.json``) rather than something read from a config file.
+"""
 import io
 from typing import List, Tuple
 import numpy as np
@@ -7,12 +13,8 @@ from PIL import Image, ImageOps
 from sahu65.core.limits import InvalidImageError
 
 
-IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 3, 1, 1)
-IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 3, 1, 1)
-
 CLIP_MEAN = np.array([0.48145466, 0.4578275, 0.40821073], dtype=np.float32).reshape(1, 3, 1, 1)
 CLIP_STD = np.array([0.26862954, 0.26130258, 0.27577711], dtype=np.float32).reshape(1, 3, 1, 1)
-
 
 def decode_image(data: bytes) -> Tuple[Image.Image, List[str]]:
     """Decodes image, handles EXIF orientation, converts to RGB, and collects warnings."""
@@ -42,18 +44,6 @@ def decode_image(data: bytes) -> Tuple[Image.Image, List[str]]:
         return img, warnings
     except Exception as e:
         raise InvalidImageError(f"Failed to decode image: {str(e)}")
-
-
-def preprocess_for_classifier(img: Image.Image, target_size: int = 224) -> np.ndarray:
-    """Preprocesses image for S2 classifier: bicubic resize to target_size, normalize with ImageNet mean/std.
-
-    Returns: float32 array of shape (1, 3, target_size, target_size)
-    """
-    resized = img.resize((target_size, target_size), Image.Resampling.BICUBIC)
-    arr = np.asarray(resized, dtype=np.float32) / 255.0  # (H, W, 3)
-    arr = np.transpose(arr, (2, 0, 1))[np.newaxis, ...]  # (1, 3, H, W)
-    arr = (arr - IMAGENET_MEAN) / IMAGENET_STD
-    return arr.astype(np.float32)
 
 
 def preprocess_for_clip(img: Image.Image, target_size: int = 224, enable_tta: bool = False) -> np.ndarray:

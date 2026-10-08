@@ -1,7 +1,26 @@
 {
-  "T_lo": 0.35,
-  "T_hi": 0.65,
-  "benchmark_id": null,
-  "fitted_on": null,
-  "note": "PLACEHOLDER — real thresholds fitted on calibration split in P2"
+  "T_lo": 0.263823,
+  "T_hi": 0.8794084180169665,
+  "benchmark_id": "bench-8e0bd9e97e3e",
+  "fitted_on": "2026-10-08",
+  "selection": {
+    "max_fpr_target": 0.03,
+    "min_recall_target": 0.3,
+    "method": "5-fold cross-validation on out-of-fold scores",
+    "fold_thresholds": [
+      0.885596,
+      0.876652,
+      0.879408,
+      0.882346,
+      0.87283
+    ],
+    "fold_spread": 0.012766,
+    "achieved_fpr_cv": 0.028796,
+    "achieved_recall_cv": 0.309577,
+    "auc_out_of_fold": 0.821278,
+    "expected_calibration_error_raw": 0.076077,
+    "expected_calibration_error_calibrated": 0.044029,
+    "note": "Thresholds are in CALIBRATED score space: the service compares them against fuse_signals() output, not the raw probe score."
+  },
+  "note": "Fitted on benchmark bench-8e0bd9e97e3e (831 images, 13 generator families, 2 real-photo pipelines) using out-of-fold scores. A single 50/50 split was rejected: on this benchmark its two halves are not comparable. Small sample - read MODEL_CARD.md before citing."
 }

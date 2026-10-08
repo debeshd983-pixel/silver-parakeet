@@ -19,7 +19,6 @@ from sahu65.config import (
 )
 from sahu65.core.limits import DetectorError
 from sahu65.core.logging import setup_logging
-from sahu65.services.classifier import ClassifierService
 from sahu65.services.clip_probe import ClipProbeService
 from sahu65.services.runtime import RuntimeManager
 
@@ -29,11 +28,14 @@ log = setup_logging()
 READY = False
 LOAD_ERROR: str = None
 START_TIME = time.time()
-CLASSIFIER: ClassifierService = None
-CLIP_PROBE: ClipProbeService = None
+# The single shipped detector: a linear probe on a frozen CLIP ViT-B/16 encoder.
+# It replaced Organika/sdxl-detector, which measured AUC 0.6434 against this probe's
+# 0.8213 on benchmark bench-8e0bd9e97e3e and was cc-by-nc-3.0 (non-commercial).
+# Naming stays DETECTOR rather than the old S1/S2/S3 scheme; see MODEL_CARD.md.
+DETECTOR: ClipProbeService = None
 RUNTIME_MGR: RuntimeManager = None
 THRESHOLDS: Dict[str, Any] = {"T_lo": 0.35, "T_hi": 0.65, "benchmark_id": None}
-FUSION_CFG: Dict[str, Any] = {"w1": 1.0, "w2": 1.0, "b": 0.0, "benchmark_id": None}
+FUSION_CFG: Dict[str, Any] = {"w1": 0.0, "w2": 1.0, "b": 0.0, "benchmark_id": None}
 
 
 def load_configs(settings: Settings):
@@ -60,7 +62,7 @@ async def lifespan(app: FastAPI):
     /readyz returns 503 until the model is genuinely usable, so traffic is never sent to
     a half-initialised process.
     """
-    global READY, CLASSIFIER, CLIP_PROBE, RUNTIME_MGR, LOAD_ERROR
+    global READY, DETECTOR, RUNTIME_MGR, LOAD_ERROR
     settings = get_settings()
 
     log.info("Initializing detector application...")
@@ -74,8 +76,7 @@ async def lifespan(app: FastAPI):
     log.info(f"API auth: {describe_auth(settings.api_keys)}")
 
     RUNTIME_MGR = RuntimeManager(settings)
-    CLASSIFIER = ClassifierService(settings)
-    CLIP_PROBE = ClipProbeService(settings)
+    DETECTOR = ClipProbeService(settings)
     READY = False
     LOAD_ERROR = None
 
@@ -94,29 +95,23 @@ async def lifespan(app: FastAPI):
 
 
 async def _load_models_async(settings: Settings) -> None:
-    """Loads + warms models off the event loop. Sets READY or LOAD_ERROR."""
+    """Loads + warms the detector off the event loop. Sets READY or LOAD_ERROR.
+
+    Failures are fatal, not degraded. A missing or unreadable checkpoint used to return a
+    constant 0.50, which looked exactly like a working model to a caller (WORKLOG defect
+    3). With REQUIRE_REAL_MODEL the service refuses to become ready instead.
+    """
     global READY, LOAD_ERROR
 
     def _blocking() -> str:
         try:
-            # Fail fast: a missing or unreadable S2 checkpoint must never degrade into a
-            # silent stub probability. load() used to swallow every error and predict()
-            # returned a constant 0.50, which fused to 0.50 and looked like a working model.
-            CLASSIFIER.load()
+            DETECTOR.load()
         except Exception as e:
             return str(e)
-
         try:
-            CLIP_PROBE.load()
+            DETECTOR.warmup()
         except Exception as e:
-            log.warning(f"CLIP probe unavailable (ignored, w2={FUSION_CFG.get('w2')}): {e}")
-
-        log.info("Running model warm-up inference...")
-        CLASSIFIER.warmup()
-        try:
-            CLIP_PROBE.warmup()
-        except Exception as e:
-            log.warning(f"CLIP warm-up warning: {e}")
+            return f"warm-up inference failed: {e}"
         return ""
 
     error = await asyncio.to_thread(_blocking)
@@ -124,16 +119,16 @@ async def _load_models_async(settings: Settings) -> None:
     if error:
         LOAD_ERROR = error
         if settings.require_real_model:
-            log.error(f"Fatal: S2 classifier failed to load: {error}. /readyz will report 503.")
+            log.error(f"Fatal: detector failed to load: {error}. /readyz will report 503.")
         else:
-            log.warning(f"S2 classifier unavailable, continuing in stub mode: {error}")
+            log.warning(f"Detector unavailable, continuing in degraded mode: {error}")
         return
 
     READY = True
     log.info(
-        f"Application ready. classifier={CLASSIFIER.model_id} "
-        f"ai_class_index={CLASSIFIER.ai_class_index} "
-        f"weights={os.path.basename(CLASSIFIER.model_path)}"
+        f"Application ready. detector={DETECTOR.model_id} "
+        f"weights={os.path.basename(DETECTOR.model_path)} "
+        f"head={os.path.basename(DETECTOR.head_path)}"
     )
 
 
@@ -141,7 +136,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
         title="AI-Generated Image Detector API",
-        version="2026.10.0",
+        version="2026.11.0",
         docs_url="/docs" if settings.enable_docs else None,
         redoc_url=None,
         openapi_url="/openapi.json" if settings.enable_docs else None,

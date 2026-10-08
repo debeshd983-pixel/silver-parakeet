@@ -30,7 +30,6 @@ from sahu65.services.ensemble import (
 )
 from sahu65.services.preprocess import (
     decode_image,
-    preprocess_for_classifier,
     preprocess_for_clip,
 )
 from sahu65.services.domain import assess_domain
@@ -91,8 +90,10 @@ async def readyz():
 @router.get("/version", response_model=VersionResponse)
 async def version():
     """Returns model version metadata, benchmark ID, thresholds, and fusion parameters."""
+    from sahu65.services.explain import configured as explain_configured
+
     return VersionResponse(
-        model_version="2026.10.0",
+        model_version="2026.11.0",
         benchmark_id=main_module.THRESHOLDS.get("benchmark_id"),
         thresholds={
             "T_lo": main_module.THRESHOLDS.get("T_lo", 0.35),
@@ -104,10 +105,10 @@ async def version():
             "b": main_module.FUSION_CFG.get("b", 0.0),
         },
         models={
-            "classifier": getattr(main_module.CLASSIFIER, "model_id", "unloaded"),
-            "clip_probe": getattr(main_module.CLIP_PROBE, "model_id", "unloaded"),
+            "detector": getattr(main_module.DETECTOR, "model_id", "unloaded"),
         },
         calibrated=main_module.THRESHOLDS.get("fitted_on") is not None,
+        explanation=explain_configured(),
     )
 
 
@@ -115,10 +116,17 @@ async def version():
 async def detect(
     request: Request,
     file: UploadFile = File(...),
+    explain: bool = False,
+    explain_provider: Optional[str] = None,
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     authorization: Optional[str] = Header(None, alias="Authorization"),
 ):
-    """Detects whether an uploaded image is AI-generated with calibrated probability and explicit abstain band."""
+    """Detects whether an uploaded image is AI-generated with calibrated probability and explicit abstain band.
+
+    Pass ``explain=true`` to attach a plain-language narration. It requires an LLM
+    provider key in the environment; without one the field is null and the detection is
+    unchanged. The narration is generated from the numbers above and cannot alter them.
+    """
     start_time = time.time()
     req_id = uuid.uuid4().hex[:12]
     settings = get_settings()
@@ -162,23 +170,26 @@ async def detect(
     if main_module.THRESHOLDS.get("fitted_on") is None:
         warnings.append("thresholds_unfitted")
 
-    # 7. S1: Provenance extraction (C2PA)
+    # 7. C2PA provenance extraction
     c2pa_res = extract_c2pa_provenance(image_bytes, enabled=settings.enable_c2pa)
 
-    # 8. Preprocessing
-    s2_tensor = preprocess_for_classifier(img)
-    s3_tensor = preprocess_for_clip(img, enable_tta=settings.enable_tta)
+    # 8. Preprocessing. The probe is aspect-preserving (shortest side 224 + centre crop),
+    #    NOT a squash to a square.
+    tensor = preprocess_for_clip(img, enable_tta=False)
 
-    # 9. Concurrency-managed model inference
+    # 9. Concurrency-managed inference. Always exactly one image per session.run(): the
+    #    shipped encoder is dynamically quantized, so it computes activation ranges per
+    #    run and an image's embedding would depend on its batch-mates. Serving one at a
+    #    time keeps the score identical to what the probe head was fitted on.
     runtime = main_module.RUNTIME_MGR
-    p_cls = await runtime.run_in_pool(main_module.CLASSIFIER.predict, s2_tensor)
-    p_clip = await runtime.run_in_pool(main_module.CLIP_PROBE.predict, s3_tensor)
+    p_clip = await runtime.run_in_pool(main_module.DETECTOR.predict, tensor)
 
-    # 10. Ensemble fusion in logit space
-    w1 = float(main_module.FUSION_CFG.get("w1", 1.0))
+    # 10. Platt calibration in logit space. Only the clip weight is non-zero; w1 names the
+    #     retired sdxl-detector and stays 0.
+    w1 = float(main_module.FUSION_CFG.get("w1", 0.0))
     w2 = float(main_module.FUSION_CFG.get("w2", 1.0))
     b = float(main_module.FUSION_CFG.get("b", 0.0))
-    p_fused = fuse_signals(p_cls, p_clip, w1, w2, b)
+    p_fused = fuse_signals(p_clip, p_clip, w1, w2, b)
 
     # 11. Verdict policy
     t_lo = float(main_module.THRESHOLDS.get("T_lo", 0.35))
@@ -195,7 +206,7 @@ async def detect(
     out_of_domain = False
     if settings.document_gate and verdict != "ai_generated_verified":
         dom = await runtime.run_in_pool(
-            assess_domain, main_module.CLASSIFIER, img, final_prob
+            assess_domain, main_module.DETECTOR, img, final_prob
         )
         if dom.out_of_domain:
             out_of_domain = True
@@ -205,7 +216,7 @@ async def detect(
     # 13. Confidence rating
     conf = compute_confidence(
         p_ai=final_prob,
-        p_cls=p_cls,
+        p_cls=p_clip,
         p_clip=p_clip,
         verdict=verdict,
         t_lo=t_lo,
@@ -214,6 +225,40 @@ async def detect(
     )
 
     latency_ms = round((time.time() - start_time) * 1000.0, 2)
+
+    # 13b. Optional narration, computed strictly after the verdict is final. It reads the
+    # detector's own output and cannot feed back into any of it. A provider failure is
+    # logged and dropped, never surfaced as a detection error.
+    explanation = None
+    explanation_provider = None
+    if explain:
+        from sahu65.services.explain import ExplanationRequest, explain as run_explain
+
+        result = await runtime.run_in_pool(
+            lambda: run_explain(
+                ExplanationRequest(
+                    verdict=verdict,
+                    ai_probability=float(final_prob),
+                    confidence=conf,
+                    calibrated=main_module.THRESHOLDS.get("fitted_on") is not None,
+                    warnings=list(warnings),
+                    signals={
+                        "c2pa_present": c2pa_res.present,
+                        "c2pa_ai_declared": c2pa_res.ai_declared,
+                        "detector_probability": round(p_clip, 4),
+                        "detector_model": getattr(main_module.DETECTOR, "model_id",
+                                                  "unloaded"),
+                    },
+                    thresholds={"T_lo": t_lo, "T_hi": t_hi},
+                    model_version="2026.11.0",
+                    out_of_domain=out_of_domain,
+                ),
+                provider=explain_provider,
+            )
+        )
+        if result:
+            explanation = result["text"]
+            explanation_provider = result["provider"]
 
     logger.info(
         "Detection executed",
@@ -224,6 +269,7 @@ async def detect(
             "confidence": conf,
             "latency_ms": latency_ms,
             "warnings": warnings,
+            "explanation": bool(explanation),
         },
     )
 
@@ -234,18 +280,17 @@ async def detect(
         confidence=conf,
         signals=SignalsResponse(
             c2pa=C2PASignal(present=c2pa_res.present, ai_declared=c2pa_res.ai_declared),
-            classifier=ModelSignal(
-                model=getattr(main_module.CLASSIFIER, "model_id", "unloaded"),
-                probability=round(p_cls, 4),
-            ),
-            clip_probe=ModelSignal(
-                model=getattr(main_module.CLIP_PROBE, "model_id", "unloaded"),
+            detector=ModelSignal(
+                model=getattr(main_module.DETECTOR, "model_id", "unloaded"),
                 probability=round(p_clip, 4),
             ),
         ),
         warnings=warnings,
         out_of_domain=out_of_domain,
-        model_version="2026.10.0",
+        model_version="2026.11.0",
         benchmark_id=main_module.THRESHOLDS.get("benchmark_id"),
+        calibrated=main_module.THRESHOLDS.get("fitted_on") is not None,
+        explanation=explanation,
+        explanation_provider=explanation_provider,
         latency_ms=latency_ms,
     )

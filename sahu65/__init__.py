@@ -28,7 +28,7 @@ Or from a shell::
 """
 from .local import Detection, LocalDetector, detect, detect_bytes, model_info, warm
 
-__version__ = "1.0.12"
+__version__ = "1.1.0"
 
 __all__ = [
     "Detection",

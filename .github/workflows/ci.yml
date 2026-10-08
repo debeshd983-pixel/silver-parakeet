@@ -62,27 +62,32 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-build.txt
 
-      - name: Check the checkpoint is committed and under GitHub's file limit
-        # tests/test_classifier.py skips without weights, so a missing checkpoint would
+      - name: Check the encoder is committed and under GitHub's file limit
+        # tests/test_clip_probe.py skips without weights, so a missing encoder would
         # otherwise make the suite silently weaker rather than fail.
         #
-        # GitHub hard-blocks files >= 100 MiB. The INT8 checkpoint is ~91.8 MiB, leaving
-        # only ~8 MiB of margin - a larger checkpoint would be rejected at commit time
-        # with an opaque error. Fail here with a clear message instead, and see the
-        # remediation note in README ("Checkpoint size").
+        # GitHub hard-blocks files >= 100 MiB. The INT8 CLIP encoder is ~85.5 MiB, leaving
+        # ~14 MiB of margin - a larger encoder would be rejected at commit time with an
+        # opaque error. Fail here with a clear message instead, and see the remediation
+        # note in README ("Publishing to PyPI").
         run: |
-          CKPT=sahu65/models/classifier.int8.onnx
+          CKPT=sahu65/models/clip_encoder.int8.onnx
+          HEAD=sahu65/models/clip_head.json
           if [ ! -f "$CKPT" ]; then
             echo "::error::$CKPT is missing from the repo"
             exit 1
           fi
+          if [ ! -f "$HEAD" ]; then
+            echo "::error::$HEAD is missing from the repo (the fitted probe head)"
+            exit 1
+          fi
           SIZE=$(stat -c%s "$CKPT")
           LIMIT=$((100 * 1024 * 1024))
-          echo "checkpoint: $SIZE bytes ($((SIZE / 1024 / 1024)) MiB), GitHub limit 100 MiB"
+          echo "encoder: $SIZE bytes ($((SIZE / 1024 / 1024)) MiB), GitHub limit 100 MiB"
           if [ "$SIZE" -ge "$LIMIT" ]; then
-            echo "::error::checkpoint exceeds GitHub's 100 MiB per-file limit."
+            echo "::error::encoder exceeds GitHub's 100 MiB per-file limit."
             echo "::error::Remediation: store it as a GitHub Release asset and download it"
-            echo "::error::in scripts/fetch_models.py, or enable Git LFS for *.onnx."
+            echo "::error::in scripts/build_dynamic_clip.py, or enable Git LFS for *.onnx."
             exit 1
           fi
           ls -la sahu65/models/
@@ -133,13 +138,19 @@ jobs:
           from PIL import Image
           info = sahu65.model_info()
           assert info["loaded"], info
-          assert info["ai_class_index"] == 0, info
-          assert info["labels"]["0"] == "artificial", info
+          # The detector is a linear probe on frozen CLIP: it emits 512-d embeddings and
+          # carries no class labels of its own, so the head/encoder agreement is what
+          # has to hold here.
+          assert info["embed_dim"] == 512, info
+          assert "higher" in info["head_direction"], info
           buf = io.BytesIO()
           Image.new("RGB", (320, 320), "white").save(buf, format="JPEG")
           r = sahu65.detect_bytes(buf.getvalue())
           assert r.verdict in ("likely_ai", "likely_real", "inconclusive"), r
-          print("smoke test OK:", r.verdict, r.ai_probability)
+          # Thresholds are fitted, so this must NOT be flagged unfitted.
+          assert r.calibrated, "thresholds.json is not fitted"
+          assert "thresholds_unfitted" not in r.warnings, r.warnings
+          print("smoke test OK:", sahu65.__version__, r.verdict, r.ai_probability)
           PY
 
       - name: Upload artifacts
