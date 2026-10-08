@@ -121,13 +121,24 @@ a head that did not train on it. Intervals are Wilson 95%.
 | Metric | Target (`architecture.md`) | Measured | |
 |---|---|---|---|
 | ROC AUC | ≥ 0.88 | **0.8213** | miss |
-| False-positive rate on real photos | ≤ 3% | **2.88%** | **met** |
-| Recall on AI @ that operating point | — | **30.96%** | see below |
+| False-positive rate on real photos | ≤ 3% | **2.88%** (CV) / **9.5%** (held-out split) | **see note** |
+| Recall on AI @ that operating point | — | **30.96%** (CV) / **27.6%** (held-out split) | see below |
 | Expected calibration error | < 0.08 | **0.0440** | **met** (0.0761 before Platt) |
-| Abstain rate | ≤ 25% | ~26% | met |
+| Abstain rate | ≤ 25% | **65.1%** | **miss** |
 
-**Recall is low and that is the honest ceiling, not a tuning failure.** The FPR/recall
-trade-off is fixed by the ROC curve:
+**Two views are given because they disagree, and the disagreement is the finding.**
+The first row of each pair is the 5-fold cross-validated estimate, which is what
+`scripts/fit_fusion.py` used to select the thresholds. The second is the single held-out
+split, which the thresholds were never fitted on. At n=401 the held-out split puts the
+false-positive rate at **9.5%** (95% CI 4.4–19.3), not 2.9% — so **the ≤3% target is not
+demonstrably met.** The CV figure is the better estimate of the underlying rate and the
+split figure is the better estimate of the uncertainty; both are reported because
+publishing only the flattering one would be the same error as the retracted numbers this
+card replaced.
+
+**Recall is low and that is the honest ceiling, not a tuning failure.** On the held-out
+split, 65.1% of images abstain, and of those that commit, recall is 79.2% — an overall
+detection rate of roughly 28%. The FPR/recall trade-off is fixed by the ROC curve:
 
 | threshold | FPR on real | recall on AI |
 |---|---|---|
@@ -145,8 +156,10 @@ correctly configured already; anyone wanting higher recall should raise `T_hi`
 knowingly**, accepting the FPR cost. Thresholds live in `config/thresholds.json`.
 
 **Interval width:** the benchmark is 831 images. Per-family recall intervals are roughly
-±10 percentage points and the FPR interval roughly ±1.5 points. These are point estimates
-from a small benchmark, not precise measurements.
+±10 percentage points, several are 0% at the shipped threshold, and the FPR interval on
+the held-out split is 4.4–19.3 points. These are point estimates from a small benchmark,
+not precise measurements. Two independent real-photo pipelines is also a weak basis for a
+false-positive rate, which is the number that matters most here.
 
 ### 3.4 Documents are an unsupported domain
 

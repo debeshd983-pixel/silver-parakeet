@@ -13,9 +13,9 @@ models/raw/
 # every number in MODEL_CARD.md can be re-derived; the 412 MB of images and the cached
 # embeddings are not (architecture.md 5: "benchmark/ gitignored; manifest + hashes
 # tracked, images not"). Rebuild with scripts/build_benchmark.py.
-# benchmark/images/
-# benchmark/*.npz
-# benchmark/scores*.csv
+# benchmark/images/ is tracked (per local decision in 57b99b4).
+benchmark/*.npz
+benchmark/scores*.csv
 
 # Local run logs from long-running build steps.
 *.log

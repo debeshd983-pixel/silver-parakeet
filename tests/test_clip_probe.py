@@ -57,27 +57,41 @@ def test_bundled_head_is_not_degenerate():
     assert float(np.linalg.norm(w)) > 1e-6, "head weights are ~zero: constant output"
 
 
+HEAD_DIRECTION_FIXTURE = os.path.join("benchmark", "head_direction_fixture.csv")
+
+
 def test_bundled_head_direction_is_positive_for_ai():
     """Pins the sign convention.
 
     CLIP has no labels of its own, so which direction means "AI" is decided entirely by
     how the head was fitted. Nothing at runtime would catch a flipped head: every score
-    would simply be inverted. This asserts the fitted head actually scores AI above real
-    on real benchmark data.
+    would simply be inverted, and every verdict with it. This asserts the shipped head
+    scores AI above real on recorded out-of-fold outputs.
+
+    Uses a small committed fixture rather than the full benchmark, because the 412 MB of
+    benchmark images are deliberately gitignored. The fixture is a frozen slice of
+    out-of-fold scores from the head that ships, so this invariant is checked in CI.
     """
-    bench = os.path.join("benchmark", "scores_oof.csv")
-    if not os.path.isfile(bench):
-        pytest.skip("benchmark not built; run scripts/build_benchmark.py first")
+    path = HEAD_DIRECTION_FIXTURE
+    if not os.path.isfile(path):
+        # Fall back to the full out-of-fold scores when the benchmark is built locally.
+        path = os.path.join("benchmark", "scores_oof.csv")
+    if not os.path.isfile(path):
+        pytest.skip("no recorded scores; run scripts/train_clip_probe.py first")
 
     import csv
 
-    rows = list(csv.DictReader(open(bench, encoding="utf-8")))
+    rows = [r for r in csv.DictReader(open(path, encoding="utf-8"))
+            if r.get("perturbation", "original") == "original"]
+    if len(rows) < 40:
+        pytest.skip("not enough recorded scores")
     y = np.array([int(r["label"]) for r in rows])
-    # out-of-fold scores were produced by this same head, so the mean separation here is
-    # a direct check of the sign convention.
     p = np.array([float(r["p_detector"]) for r in rows])
+
+    assert (y == 0).sum() > 5 and (y == 1).sum() > 5
     assert p[y == 1].mean() > p[y == 0].mean(), (
-        "head scores AI images LOWER than real ones: the sign is flipped"
+        "head scores AI images LOWER than real ones: the sign is flipped, which would "
+        "invert every verdict"
     )
     assert "higher" in HEAD_DIRECTION
 
@@ -176,8 +190,14 @@ def test_encoder_is_batch_sensitive_so_serve_one_at_a_time():
 
     path = os.path.join(str(PACKAGE_DIR), "models", "clip_encoder.int8.onnx")
     bench = os.path.join("benchmark", "manifest.csv")
-    if not (os.path.isfile(path) and os.path.isfile(bench)):
-        pytest.skip("bundled encoder or benchmark missing")
+    images = os.path.join("benchmark", "images")
+    # The benchmark images are gitignored by design, so this diagnostic only runs where
+    # the benchmark has been built locally. It must SKIP, not fail: CI checks the encoder
+    # and head exist, not that 412 MB of images are present.
+    if not os.path.isfile(path):
+        pytest.skip("bundled encoder missing")
+    if not (os.path.isfile(bench) and os.path.isdir(images)):
+        pytest.skip("benchmark images not built (they are gitignored)")
 
     import csv
 
@@ -191,7 +211,10 @@ def test_encoder_is_batch_sensitive_so_serve_one_at_a_time():
 
     tensors = []
     for r in rows:
-        with open(os.path.join(os.path.dirname(bench), r["path"]), "rb") as f:
+        full = os.path.join(images, os.path.basename(r["path"]))
+        if not os.path.isfile(full):
+            pytest.skip("benchmark image missing")
+        with open(full, "rb") as f:
             img, _ = decode_image(f.read())
         tensors.append(preprocess_for_clip(img))
 

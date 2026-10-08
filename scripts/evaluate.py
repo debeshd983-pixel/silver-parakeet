@@ -106,10 +106,13 @@ def load_rows(path: Path, split: str) -> List[dict]:
             continue
         out.append({
             "label": int(r["label"]),
-            "generator": r["generator"],
-            "perturbation": r["perturbation"],
-            "source_dataset": r["source_dataset"],
-            "split": r["split"],
+            "generator": r.get("generator", ""),
+            "perturbation": r.get("perturbation", "original"),
+            # Scores files written by train_clip_probe.py carry a reduced column set
+            # (they are out-of-fold scores, not a scoring pass), so optional columns are
+            # read defensively rather than assumed.
+            "source_dataset": r.get("source_dataset", ""),
+            "split": r.get("split", ""),
             "p": float(r["p_detector"]),
         })
     return out
@@ -127,9 +130,38 @@ def apply_policy(p: np.ndarray, t_lo: float, t_hi: float) -> np.ndarray:
     return verdicts
 
 
-def evaluate(rows: List[dict], t_lo: float, t_hi: float, t_lo_calibrated: bool) -> dict:
+def apply_calibration(p: np.ndarray, w1: float, w2: float, b: float) -> np.ndarray:
+    """Applies the shipped logit-space fusion exactly as sahu65/services/ensemble.py does.
+
+    The service compares T_lo/T_hi against the FUSED score, not the raw probe output.
+    Thresholding the raw score here instead would put the evaluation on a different
+    operating point than the one that ships, and would report an abstain rate that no
+    user ever experiences.
+
+    Only the clip weight is non-zero (w1 names the retired classifier), so this reduces to
+    Platt scaling of the probe score, but it reads the weights from config rather than
+    assuming, so it stays correct if the fusion changes.
+    """
+    eps = 1e-4
+    cp = np.clip(p, eps, 1.0 - eps)
+    z = np.log(cp / (1.0 - cp))
+    z = w1 * z + w2 * z + b
+    return 1.0 / (1.0 + np.exp(-z))
+
+
+def evaluate(rows: List[dict], t_lo: float, t_hi: float, t_lo_calibrated: bool,
+             fusion: Optional[Dict[str, float]] = None) -> dict:
+    fusion = fusion or {}
+    w1 = float(fusion.get("w1", 0.0))
+    w2 = float(fusion.get("w2", 1.0))
+    b = float(fusion.get("b", 0.0))
+
     y = np.array([r["label"] for r in rows])
-    p = np.array([r["p"] for r in rows])
+    raw = np.array([r["p_raw"] if "p_raw" in r else r["p"] for r in rows])
+    # Thresholds are compared against the calibrated score, as the service does. Callers
+    # may pre-calibrate (see main), in which case r["p"] already is that score.
+    p = apply_calibration(raw, w1, w2, b) if "p_raw" not in rows[0] else np.array(
+        [r["p"] for r in rows])
     verdicts = apply_policy(p, t_lo, t_hi)
 
     real_mask = y == 0
@@ -169,6 +201,7 @@ def evaluate(rows: List[dict], t_lo: float, t_hi: float, t_lo_calibrated: bool) 
         "n_ai": int(ai_mask.sum()),
         "thresholds": {"T_lo": t_lo, "T_hi": t_hi, "fitted": t_lo_calibrated},
         "auc": roc_auc(y, p),
+        "auc_uncalibrated": roc_auc(y, raw),
         "accuracy_committed": acc_committed,
         "accuracy_ci": [acc_lo, acc_hi],
         "n_committed": n_committed,
@@ -344,13 +377,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     # Default to the thresholds actually shipped, so this reports the deployed policy.
     t_lo, t_hi, fitted = 0.35, 0.65, False
+    fusion: Dict[str, float] = {}
     try:
-        from sahu65.config import is_calibrated, load_thresholds
+        from sahu65.config import is_calibrated, load_fusion, load_thresholds
 
         th = load_thresholds("sahu65/config")
         t_lo = float(th.get("T_lo", t_lo))
         t_hi = float(th.get("T_hi", t_hi))
         fitted = is_calibrated("sahu65/config")
+        fusion = load_fusion("sahu65/config")
     except Exception:
         pass
     if args.t_lo is not None:
@@ -363,7 +398,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         log(f"ERROR: no rows for split={args.split}")
         return 1
 
-    metrics = evaluate(rows, t_lo, t_hi, fitted)
+    # Calibrate once, here, so evaluate(), group_breakdown() and worst_false_positives()
+    # all see the same score the service thresholds. Calibrating inside only one of them
+    # is how the per-generator table ends up disagreeing with the headline numbers.
+    for r in rows:
+        r["p_raw"] = r["p"]
+    cal = apply_calibration(np.array([r["p"] for r in rows]),
+                            float(fusion.get("w1", 0.0)),
+                            float(fusion.get("w2", 1.0)),
+                            float(fusion.get("b", 0.0)))
+    for r, v in zip(rows, cal):
+        r["p"] = float(v)
+
+    metrics = evaluate(rows, t_lo, t_hi, fitted, fusion)
     groups = group_breakdown(rows, t_lo, t_hi)
     fps = worst_false_positives(rows, t_lo, t_hi)
 
