@@ -26,3 +26,5 @@ build/
 .DS_Store
 .env
 rndf/
+benchmark.zip
+benchmark.zip/*
