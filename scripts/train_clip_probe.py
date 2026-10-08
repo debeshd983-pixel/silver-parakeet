@@ -120,7 +120,15 @@ def cv_scores(x: np.ndarray, y: np.ndarray, k: int, l2: float, seed: int = 0
 
 def extract_embeddings(encoder_path: Path, manifest: Path, batch: int = 16,
                        limit: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray, List[dict]]:
-    """Runs the ONNX encoder over the benchmark, using serve-time preprocessing."""
+    """Runs the ONNX encoder over the benchmark, using serve-time preprocessing.
+
+    The encoder path is never substituted. An earlier version fell back to
+    ``clip_encoder.int8.onnx`` next to whatever was requested, and silently fitted a
+    head to the wrong model when the requested file was absent -- producing a plausible
+    CV AUC of 0.57 from a static-quantised encoder while the intended dynamic one scores
+    0.82. A head fitted on the wrong encoder is worse than no head, because it looks
+    real. Pass the path you mean.
+    """
     import onnxruntime as ort
 
     from sahu65.services.preprocess import CLIP_MEAN, CLIP_STD, decode_image
@@ -130,15 +138,13 @@ def extract_embeddings(encoder_path: Path, manifest: Path, batch: int = 16,
         rows = rows[:limit]
     root = manifest.parent
 
-    # Prefer the INT8 build exactly as sahu65/services/classifier.py prefers its own,
-    # so what is fitted here is what gets served.
-    if not encoder_path.exists():
-        alt = encoder_path.parent / "clip_encoder.int8.onnx"
-        if alt.exists():
-            log(f"  {encoder_path.name} not found; using {alt.name}")
-            encoder_path = alt
-        else:
-            raise FileNotFoundError(f"no CLIP encoder at {encoder_path}")
+    if not encoder_path.is_file():
+        raise FileNotFoundError(
+            f"encoder not found: {encoder_path}. Refusing to substitute a different "
+            f"checkpoint -- a head fitted on the wrong encoder is silently useless. "
+            f"Build it with scripts/export_clip_onnx.py (static) or "
+            f"scripts/build_dynamic_clip.py (dynamic INT8, what this project ships)."
+        )
 
     sess = ort.InferenceSession(str(encoder_path), providers=["CPUExecutionProvider"])
     inp = sess.get_inputs()[0].name
@@ -229,11 +235,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 1
 
     cache = Path(args.embeddings_out)
+    manifest_rows = {}
+    try:
+        with open(manifest, encoding="utf-8", newline="") as fh:
+            manifest_rows = {r["path"]: r for r in csv.DictReader(fh)}
+    except Exception as exc:
+        log(f"could not read {manifest}: {exc}")
+
     if args.reuse_embeddings and cache.is_file():
         log(f"reusing cached embeddings from {cache}")
         blob = np.load(cache, allow_pickle=False)
         feats, y = blob["features"], blob["labels"]
-        kept = [{"path": str(p)} for p in blob["paths"]]
+        # Rejoin the manifest rows. The cache stores only paths, so reconstructing `kept`
+        # from paths alone silently drops `generator` and `perturbation` -- which then
+        # vanish from the emitted scores and leave evaluate.py reporting no per-generator
+        # breakdown at all.
+        kept = []
+        for p in (str(x) for x in blob["paths"]):
+            row = dict(manifest_rows.get(p, {"path": p}))
+            row["path"] = p
+            kept.append(row)
     else:
         log("extracting CLIP embeddings ...")
         feats, labels, kept_all = extract_embeddings(
@@ -357,12 +378,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         import csv as _csv
 
         p_oof = cv_scores(feats, y, args.folds, l2)
-        splits = {}
-        try:
-            for r in _csv.DictReader(open(Path(args.manifest), encoding="utf-8")):
-                splits[r["path"]] = r["split"]
-        except Exception as exc:
-            log(f"  could not read splits from {args.manifest}: {exc}")
+        splits = {r["path"]: r.get("split", "") for r in kept}
 
         out = Path(args.emit_split_scores)
         with open(out, "w", newline="", encoding="utf-8") as fh:
